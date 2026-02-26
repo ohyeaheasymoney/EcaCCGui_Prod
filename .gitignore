@@ -1,0 +1,8 @@
+__pycache__/
+venv/
+jobs/
+*.pyc
+dell_catalog_cache.xml
+audit.log
+server.log
+users.json

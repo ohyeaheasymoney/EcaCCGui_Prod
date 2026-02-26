@@ -1,0 +1,56 @@
+{
+  "servicenow": {
+    "label": "ServiceNow",
+    "description": "Full server deployment, provisioning, QC, network, and power automation.",
+    "path": "/var/lib/rundeck/projects/ansible",
+    "hasServerClass": true,
+    "workflows": [
+      "configbuild",
+      "postprov",
+      "quickqc",
+      "cisco_switch",
+      "juniper_switch",
+      "console_switch",
+      "pdu"
+    ]
+  },
+  "openai": {
+    "label": "OpenAI",
+    "description": "Network switch automation \u2014 Cisco, Juniper, and console switch setup and firmware.",
+    "path": "/var/lib/rundeck/projects/ansible",
+    "hasServerClass": false,
+    "enabled": false,
+    "workflows": [
+      "cisco_switch",
+      "juniper_switch",
+      "console_switch"
+    ],
+    "lastModified": "2026-02-24 19:33:18"
+  },
+  "aes": {
+    "label": "AES",
+    "description": "Network switch automation \u2014 Cisco, Juniper, and console switch setup and firmware.",
+    "path": "/var/lib/rundeck/projects/ansible",
+    "hasServerClass": false,
+    "enabled": false,
+    "workflows": [
+      "cisco_switch",
+      "juniper_switch",
+      "console_switch"
+    ],
+    "lastModified": "2026-02-24 19:33:27"
+  },
+  "traderjoes": {
+    "label": "Trader Joe's",
+    "description": "Network switch automation \u2014 Cisco, Juniper, and console switch setup and firmware.",
+    "path": "/var/lib/rundeck/projects/ansible",
+    "hasServerClass": false,
+    "enabled": false,
+    "workflows": [
+      "cisco_switch",
+      "juniper_switch",
+      "console_switch"
+    ],
+    "lastModified": "2026-02-24 19:33:31"
+  }
+}
