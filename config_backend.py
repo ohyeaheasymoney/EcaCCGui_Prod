@@ -712,7 +712,7 @@ def db_list_jobs() -> List[Dict[str, Any]]:
 _init_db()
 
 
-PLAYBOOK_ROOT = "/var/lib/rundeck/projects/ansible"
+PLAYBOOK_ROOT = os.path.join(UI_BASE_DIR)
 CENTRAL_GENERATE_INVENTORY = os.path.join(PLAYBOOK_ROOT, "generate_inventory.py")
 
 # IMPORTANT: your generate_inventory.py is writing to this (per your output)
