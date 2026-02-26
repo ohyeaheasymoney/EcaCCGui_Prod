@@ -73,7 +73,13 @@ def _load_users():
         with open(AUTH_USERS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
+        log.warning("[auth] Failed to load users.json", exc_info=True)
         return {}
+
+
+def _save_users(data):
+    """Atomic write of users dict (with backup)."""
+    _write_json(AUTH_USERS_FILE, data)
 
 
 def _create_default_users():
@@ -99,8 +105,7 @@ def add_user(username, password, role="user", fullName="", badgeNumber=""):
     """Add a new user in users.json with mustChangePassword flag."""
     users = _load_users()
     users[username] = {"password_hash": _hash_pw(password), "role": role, "mustChangePassword": True, "fullName": fullName, "badgeNumber": badgeNumber}
-    with open(AUTH_USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2)
+    _save_users(users)
 
 
 def remove_user(username):
@@ -108,8 +113,7 @@ def remove_user(username):
     users = _load_users()
     if username in users:
         del users[username]
-        with open(AUTH_USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(users, f, indent=2)
+        _save_users(users)
         return True
     return False
 
@@ -131,8 +135,7 @@ def update_user_role(username, role):
     if username not in users:
         raise ValidationError(f"User '{username}' not found")
     users[username]["role"] = role
-    with open(AUTH_USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2)
+    _save_users(users)
     return True
 
 
@@ -145,8 +148,7 @@ def reset_user_password(username, new_password):
         raise ValidationError(f"User '{username}' not found")
     users[username]["password_hash"] = _hash_pw(new_password)
     users[username]["mustChangePassword"] = True
-    with open(AUTH_USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2)
+    _save_users(users)
     return True
 
 
@@ -172,8 +174,7 @@ def change_own_password(username, current_password, new_password):
         raise ValidationError("New password must be different from current password")
     users[username]["password_hash"] = _hash_pw(new_password)
     users[username]["mustChangePassword"] = False
-    with open(AUTH_USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2)
+    _save_users(users)
     return True
 
 
@@ -182,14 +183,24 @@ def change_own_password(username, current_password, new_password):
 # ─────────────────────────────────────────────────────────────
 
 def _load_customers():
-    """Load customers from JSON, auto-creating defaults if missing."""
+    """Load customers from JSON, auto-creating defaults if missing.
+    Normalizes stale paths to UI_BASE_DIR so the app self-heals on relocation."""
     if not os.path.isfile(CUSTOMERS_FILE):
         _create_default_customers()
     try:
         with open(CUSTOMERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except Exception:
+        log.warning("[config] Failed to load customers.json", exc_info=True)
         return {}
+    dirty = False
+    for cust in data.values():
+        if cust.get("path") and cust["path"] != UI_BASE_DIR:
+            cust["path"] = UI_BASE_DIR
+            dirty = True
+    if dirty:
+        _write_json(CUSTOMERS_FILE, data)
+    return data
 
 
 def _save_customers(data):
@@ -203,28 +214,28 @@ def _create_default_customers():
         "servicenow": {
             "label": "ServiceNow",
             "description": "Full server deployment, provisioning, QC, network, and power automation.",
-            "path": "/var/lib/rundeck/projects/ansible",
+            "path": UI_BASE_DIR,
             "hasServerClass": True,
             "workflows": ["configbuild", "postprov", "quickqc", "cisco_switch", "juniper_switch", "console_switch", "pdu"],
         },
         "openai": {
             "label": "OpenAI",
             "description": "Network switch automation — Cisco, Juniper, and console switch setup and firmware.",
-            "path": "/var/lib/rundeck/projects/ansible",
+            "path": UI_BASE_DIR,
             "hasServerClass": False,
             "workflows": ["cisco_switch", "juniper_switch", "console_switch"],
         },
         "aes": {
             "label": "AES",
             "description": "Network switch automation — Cisco, Juniper, and console switch setup and firmware.",
-            "path": "/var/lib/rundeck/projects/ansible",
+            "path": UI_BASE_DIR,
             "hasServerClass": False,
             "workflows": ["cisco_switch", "juniper_switch", "console_switch"],
         },
         "traderjoes": {
             "label": "Trader Joe's",
             "description": "Network switch automation — Cisco, Juniper, and console switch setup and firmware.",
-            "path": "/var/lib/rundeck/projects/ansible",
+            "path": UI_BASE_DIR,
             "hasServerClass": False,
             "workflows": ["cisco_switch", "juniper_switch", "console_switch"],
         },
@@ -276,6 +287,7 @@ def _load_workflows():
         with open(WORKFLOWS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
+        log.warning("[config] Failed to load workflows.json", exc_info=True)
         return {}
 
 
@@ -502,49 +514,101 @@ def delete_workflow(wf_id):
     return {"status": "deleted", "id": wf_id}
 
 
+def _parse_audit_line(line: str) -> Optional[Dict[str, str]]:
+    """Parse a single audit log line into a dict with timestamp, action, etc."""
+    line = line.strip()
+    if not line:
+        return None
+    entry: Dict[str, str] = {"raw": line}
+    parts = line.split(" ", 2)
+    if len(parts) >= 3:
+        entry["timestamp"] = parts[0] + " " + parts[1]
+        remainder = parts[2]
+        for field in ("ACTION", "JOB", "USER", "IP", "DETAIL"):
+            marker = f"{field}="
+            idx = remainder.find(marker)
+            if idx != -1:
+                val_start = idx + len(marker)
+                next_idx = len(remainder)
+                for nf in ("ACTION", "JOB", "USER", "IP", "DETAIL"):
+                    ni = remainder.find(f" {nf}=", val_start)
+                    if ni != -1 and ni < next_idx:
+                        next_idx = ni
+                entry[field.lower()] = remainder[val_start:next_idx].strip()
+    return entry
+
+
 def read_audit_log(limit=200, offset=0, action_filter=None):
     """Read audit.log, return most-recent-first with parsed fields.
-    If action_filter is provided, only include entries matching that action."""
+
+    Reads backward from end-of-file in 8 KB chunks to avoid loading
+    the entire file into memory.  When action_filter is set, we must
+    read enough lines to satisfy offset+limit after filtering.
+    """
     audit_path = os.path.join(UI_BASE_DIR, "audit.log")
     if not os.path.isfile(audit_path):
         return {"entries": [], "total": 0}
+
+    CHUNK = 8192
+    af = action_filter.upper() if action_filter else None
+
     try:
-        with open(audit_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+        with open(audit_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            file_size = f.tell()
+
+            if file_size == 0:
+                return {"entries": [], "total": 0}
+
+            # If filtering, we need to read the whole file to get accurate total
+            # For non-filtered, read backward and stop once we have enough
+            if af:
+                # With filter we must scan the whole file for total count
+                f.seek(0)
+                raw = f.read().decode("utf-8", errors="replace")
+                lines = raw.split("\n")
+                lines.reverse()
+                all_entries = []
+                for line in lines:
+                    entry = _parse_audit_line(line)
+                    if entry and af in (entry.get("action", "")).upper():
+                        all_entries.append(entry)
+                total = len(all_entries)
+                page = all_entries[offset:offset + limit]
+                return {"entries": page, "total": total}
+
+            # No filter: read backward, collect only what we need
+            need = offset + limit + 1  # +1 buffer for partial line at boundary
+            collected_data = b""
+            pos = file_size
+
+            while pos > 0 and collected_data.count(b"\n") < need + 1:
+                read_size = min(CHUNK, pos)
+                pos -= read_size
+                f.seek(pos)
+                collected_data = f.read(read_size) + collected_data
+
+            lines = collected_data.decode("utf-8", errors="replace").split("\n")
+            lines.reverse()
+
+            all_entries = []
+            for line in lines:
+                entry = _parse_audit_line(line)
+                if entry:
+                    all_entries.append(entry)
+                    if len(all_entries) >= offset + limit:
+                        break
+
+            # For total count without filter, use a fast line count
+            f.seek(0)
+            total = sum(1 for ln in f if ln.strip())
+
+            page = all_entries[offset:offset + limit]
+            return {"entries": page, "total": total}
+
     except Exception:
+        log.warning("[audit] Failed to read audit log", exc_info=True)
         return {"entries": [], "total": 0}
-    # Reverse for most-recent-first
-    lines.reverse()
-    # Parse all lines first, then filter
-    all_entries = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        entry = {"raw": line}
-        parts = line.split(" ", 2)
-        if len(parts) >= 3:
-            entry["timestamp"] = parts[0] + " " + parts[1]
-            remainder = parts[2]
-            for field in ("ACTION", "JOB", "USER", "IP", "DETAIL"):
-                marker = f"{field}="
-                idx = remainder.find(marker)
-                if idx != -1:
-                    val_start = idx + len(marker)
-                    next_idx = len(remainder)
-                    for nf in ("ACTION", "JOB", "USER", "IP", "DETAIL"):
-                        ni = remainder.find(f" {nf}=", val_start)
-                        if ni != -1 and ni < next_idx:
-                            next_idx = ni
-                    entry[field.lower()] = remainder[val_start:next_idx].strip()
-        all_entries.append(entry)
-    # Apply action filter before pagination
-    if action_filter:
-        af = action_filter.upper()
-        all_entries = [e for e in all_entries if af in (e.get("action", "")).upper()]
-    total = len(all_entries)
-    page = all_entries[offset:offset + limit]
-    return {"entries": page, "total": total}
 
 
 def get_admin_stats():
@@ -559,7 +623,7 @@ def get_admin_stats():
             with open(audit_path, "r") as f:
                 audit_count = sum(1 for _ in f)
         except Exception:
-            pass
+            log.warning("[admin] Failed to count audit log entries", exc_info=True)
     return {
         "users": len(users),
         "customers": len(customers),
@@ -618,6 +682,8 @@ def _init_db() -> None:
             data        TEXT NOT NULL
         )
     """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC)")
     conn.commit()
 
     # One-time migration: import existing job.json files into SQLite
@@ -650,6 +716,7 @@ def _init_db() -> None:
             )
             migrated += 1
         except Exception:
+            log.warning("[db] Failed to migrate job.json for %s", entry[:80], exc_info=True)
             continue
     if migrated:
         conn.commit()
@@ -704,6 +771,7 @@ def db_list_jobs() -> List[Dict[str, Any]]:
         try:
             jobs.append(json.loads(row[0]))
         except Exception:
+            log.warning("[db] Skipping malformed job row: %s", str(row[0])[:80], exc_info=True)
             continue
     return jobs
 
@@ -717,7 +785,7 @@ CENTRAL_GENERATE_INVENTORY = os.path.join(PLAYBOOK_ROOT, "generate_inventory.py"
 
 # IMPORTANT: your generate_inventory.py is writing to this (per your output)
 # so we fall back to it if --out isn't honored.
-FALLBACK_GENERATED_HOSTS = "/var/lib/rundeck/projects/ansible/hosts"
+FALLBACK_GENERATED_HOSTS = os.path.join(PLAYBOOK_ROOT, "hosts")
 
 DEFAULT_INVENTORY_NAME = "target_hosts"
 
@@ -791,6 +859,7 @@ def _count_active_runs() -> int:
             if pid and _pid_alive(pid):
                 count += 1
         except Exception:
+            log.warning("[jobs] Error counting active run", exc_info=True)
             continue
     return count
 
@@ -817,6 +886,7 @@ def _count_active_run_groups() -> int:
                 if pid and _pid_alive(pid):
                     count += 1
         except Exception:
+            log.warning("[jobs] Error counting active run group", exc_info=True)
             continue
     return count
 
@@ -828,6 +898,12 @@ def _read_json(path: str) -> Dict[str, Any]:
 def _write_json(path: str, data: Dict[str, Any]) -> None:
     import tempfile
     dir_name = os.path.dirname(path)
+    # Backup existing file before overwriting
+    if os.path.isfile(path):
+        try:
+            shutil.copy2(path, path + ".bak")
+        except OSError:
+            pass
     fd, tmp = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -1416,6 +1492,50 @@ def get_form_value(key: str, default: str = "") -> str:
 # Track Popen objects so we can reap zombies
 _running_procs: Dict[int, subprocess.Popen] = {}
 
+# Maximum wall-clock time for a single playbook run (4 hours)
+MAX_RUN_TIMEOUT = 4 * 3600
+
+
+def _reap_stale_processes():
+    """Background thread that kills playbook processes older than MAX_RUN_TIMEOUT."""
+    while True:
+        time.sleep(60)
+        try:
+            with _proc_lock:
+                stale = []
+                for pid, proc in _running_procs.items():
+                    try:
+                        # Check how long the process has been running via /proc
+                        stat_path = f"/proc/{pid}/stat"
+                        if os.path.isfile(stat_path):
+                            boot_ticks = os.sysconf("SC_CLK_TCK")
+                            with open(stat_path, "r") as f:
+                                fields = f.read().split()
+                            start_ticks = int(fields[21])
+                            with open("/proc/uptime", "r") as f:
+                                uptime_secs = float(f.read().split()[0])
+                            elapsed = uptime_secs - (start_ticks / boot_ticks)
+                            if elapsed > MAX_RUN_TIMEOUT:
+                                stale.append((pid, proc, elapsed))
+                    except Exception:
+                        pass
+                for pid, proc, elapsed in stale:
+                    log.warning("[reaper] Killing stale process pid=%d (running %.0fs > %ds limit)",
+                                pid, elapsed, MAX_RUN_TIMEOUT)
+                    try:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
+                    _running_procs.pop(pid, None)
+        except Exception:
+            log.warning("[reaper] Error in stale process reaper", exc_info=True)
+
+
+# Start the reaper thread on module load
+_reaper_thread = threading.Thread(target=_reap_stale_processes, daemon=True, name="proc-reaper")
+_reaper_thread.start()
+
 
 def _parse_run_result_from_log(log_path: str) -> str:
     """Parse a specific log file for PLAY RECAP to determine passed/failed/''."""
@@ -1434,6 +1554,7 @@ def _parse_run_result_from_log(log_path: str) -> str:
                 return "failed"
         return "passed"
     except Exception:
+        log.warning("[run] Failed to parse run result from log", exc_info=True)
         return ""
 
 
@@ -1467,7 +1588,7 @@ def _update_job_status_from_pid(job: Dict[str, Any]) -> Dict[str, Any]:
                     try:
                         proc.wait(timeout=2)
                     except Exception:
-                        pass
+                        log.warning("[run] Failed to wait for process %d", pid)
                 # Parse this group's log for result
                 group_log = ginfo.get("logPath", "")
                 group_result = _parse_run_result_from_log(group_log)
@@ -1497,7 +1618,7 @@ def _update_job_status_from_pid(job: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 proc.wait(timeout=2)
             except Exception:
-                pass
+                log.warning("[run] Failed to wait for process %d", pid)
         if job.get("status") == "running":
             result = _parse_last_run_result(job)
             job["status"] = "failed" if result == "failed" else "completed"
@@ -1523,7 +1644,7 @@ def _count_host_lines(job_id: str, job: Dict[str, Any]) -> int:
                     if re.match(r'^\d+\.\d+\.\d+\.\d+', line):
                         count += 1
     except Exception:
-        pass
+        log.warning("[jobs] Failed to count host lines for job", exc_info=True)
     return count
 
 
@@ -1629,7 +1750,7 @@ def get_tsr_status(job_id: str) -> Dict[str, Any]:
                     if not expected[s].get("rack_unit"):
                         expected[s]["rack_unit"] = h.get("rack_unit", "")
     except Exception:
-        pass  # graceful degradation — still return TSR file list
+        log.warning("[tsr] Failed to parse expected hosts", exc_info=True)
 
     # 3. Build collected / missing / duplicates
     collected_serials = set(serial_files.keys())
@@ -1695,7 +1816,13 @@ def delete_tsr_file(job_id: str, filename: str, ip: str = "", user: str = "") ->
     fpath = os.path.join(tsr_dir, safe_name)
     if not os.path.isfile(fpath):
         raise ValidationError(f"TSR file not found: {safe_name}")
-    os.remove(fpath)
+    try:
+        os.remove(fpath)
+    except FileNotFoundError:
+        pass  # already deleted
+    except OSError as e:
+        log.error("[file] Failed to remove TSR %s: %s", fpath, e)
+        raise ValidationError(f"Cannot delete file: {e}")
     _audit_log("DELETE_TSR", job_id, detail=safe_name, ip=ip)
     log.info("Deleted TSR file %s for job %s", safe_name, job_id)
     return {"status": "ok", "deleted": safe_name}
@@ -1720,11 +1847,17 @@ def _parse_last_run_result(job: Dict[str, Any]) -> str:
                 return "failed"
         return "passed"
     except Exception:
+        log.warning("[run] Failed to parse last run result", exc_info=True)
         return ""
 
 
 def list_jobs() -> List[Dict[str, Any]]:
-    """List all jobs from SQLite, enriched with live summary data."""
+    """List all jobs from SQLite, enriched with live summary data.
+
+    Cached counts (hostCount, firmwareCount, tsrCount, lastRunResult) are
+    stored in the job JSON and only recomputed when the job is running or
+    when the field is missing (migration for older jobs).
+    """
     raw = db_list_jobs()
     jobs: List[Dict[str, Any]] = []
     for job in raw:
@@ -1735,17 +1868,27 @@ def list_jobs() -> List[Dict[str, Any]]:
             # Refresh PID-based status (detect finished/failed jobs)
             old_status = job.get("status")
             job = _update_job_status_from_pid(job)
-            if job.get("status") != old_status:
-                db_save_job(job_id, job)
-            # Use cached counts if available, else compute (migration for older jobs)
-            if "hostCount" not in job:
+            status_changed = job.get("status") != old_status
+
+            is_running = job.get("status") == "running"
+            needs_cache = ("hostCount" not in job or "firmwareCount" not in job
+                           or "tsrCount" not in job or "lastRunResult" not in job)
+
+            if is_running or needs_cache:
                 job["hostCount"] = _count_host_lines(job_id, job)
-            if "firmwareCount" not in job:
                 job["firmwareCount"] = _count_firmware_files(job_id)
-            job["tsrCount"] = _count_tsr_files(job_id)
-            job["lastRunResult"] = _parse_last_run_result(job)
+                job["tsrCount"] = _count_tsr_files(job_id)
+                job["lastRunResult"] = _parse_last_run_result(job)
+                db_save_job(job_id, job)
+            elif status_changed:
+                # Status changed (e.g. running → completed) — recompute and persist
+                job["tsrCount"] = _count_tsr_files(job_id)
+                job["lastRunResult"] = _parse_last_run_result(job)
+                db_save_job(job_id, job)
+
             jobs.append(job)
         except Exception:
+            log.warning("[jobs] Skipping malformed job %s in list_jobs", job_id[:80], exc_info=True)
             continue
     return jobs
 
@@ -1909,7 +2052,7 @@ def clone_job(job_id: str, overrides: Optional[Dict[str, str]] = None) -> Dict[s
             try:
                 _generate_catalog(new_id)
             except Exception:
-                pass
+                log.warning("[catalog] Failed to regenerate catalog for cloned job %s", new_id)
 
         # Regenerate vars.yml with new file references
         _generate_vars_yml(new_id)
@@ -1988,7 +2131,12 @@ def save_uploaded_file(job_id: str, file_storage, file_role: Optional[str] = Non
             if old.get("role") == role and old.get("filename") != entry["filename"]:
                 old_path = old.get("path", "")
                 if old_path and os.path.isfile(old_path):
-                    os.remove(old_path)
+                    try:
+                        os.remove(old_path)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:
+                        log.error("[file] Failed to remove old %s file %s: %s", role, old_path, e)
         files = [x for x in files if x.get("role") != role]
     else:
         files = [x for x in files if not (x.get("role") == role and x.get("filename") == entry["filename"])]
@@ -2028,7 +2176,13 @@ def delete_uploaded_file(job_id: str, role: str, filename: str, ip: str = "", us
     # Remove from disk
     fpath = target.get("path", "")
     if fpath and os.path.isfile(fpath):
-        os.remove(fpath)
+        try:
+            os.remove(fpath)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log.error("[file] Failed to remove %s: %s", fpath, e)
+            raise ValidationError(f"Cannot delete file: {e}")
 
     _audit_log("DELETE_FILE", job_id, detail=f"{role}/{filename}", ip=ip)
 
@@ -2042,7 +2196,7 @@ def delete_uploaded_file(job_id: str, role: str, filename: str, ip: str = "", us
         try:
             _generate_catalog(job_id)
         except Exception:
-            pass  # No firmware left — catalog generation will fail, that's fine
+            log.warning("[catalog] Failed to regenerate catalog after file delete for job %s", job_id)
 
     # Regenerate vars.yml so file references stay current
     _generate_vars_yml(job_id)
@@ -2146,7 +2300,7 @@ def generate_inventory_for_job(job_id: str) -> Dict[str, Any]:
 
         # Serialize output-file copy: the script writes to FALLBACK_GENERATED_HOSTS
         with _inventory_gen_lock:
-            proc = subprocess.run(cmd, capture_output=True, text=True, cwd=PLAYBOOK_ROOT)
+            proc = subprocess.run(cmd, capture_output=True, text=True, cwd=PLAYBOOK_ROOT, timeout=120)
 
             # Copy from shared output path into job dir immediately (under lock)
             used_source = ""
@@ -2754,7 +2908,7 @@ def get_job_log(job_id: str, offset: int = 0, group_id: Optional[str] = None) ->
                 try:
                     gsize = os.path.getsize(glog)
                 except Exception:
-                    pass
+                    log.warning("[log] Failed to get log size", exc_info=True)
             groups_meta[gid] = {
                 "label": ginfo.get("label", gid),
                 "status": ginfo.get("status", "unknown"),
@@ -2907,7 +3061,7 @@ def _parse_csv_mac_map(csv_path: str) -> Dict[str, Dict[str, str]]:
                     if name:
                         name_map[name.lower()] = entry
     except Exception:
-        pass
+        log.warning("[inventory] Failed to parse workbook CSV %s", csv_path, exc_info=True)
     # Attach name_map to mac_map as a special key for cross-ref
     mac_map["__by_name__"] = name_map  # type: ignore
     return mac_map
@@ -2928,7 +3082,7 @@ def _parse_inventory_log(log_path: str) -> Dict[str, str]:
                     ip = m.group(2)
                     ip_to_mac[ip] = mac
     except Exception:
-        pass
+        log.warning("[inventory] Failed to parse inventory log %s", log_path, exc_info=True)
     return ip_to_mac
 
 
@@ -2957,6 +3111,7 @@ def parse_job_inventory(job_id: str) -> Dict[str, Any]:
                     continue
                 hosts_raw.append({"ip": ip})
     except Exception:
+        log.warning("[inventory] Failed to parse inventory for job %s", job_id, exc_info=True)
         return {"hosts": [], "total": 0}
 
     # Cross-reference: get MAC from log, name from CSV
@@ -3048,7 +3203,7 @@ def list_job_runs(job_id: str) -> Dict[str, Any]:
                             break
                     result = "failed" if has_failed else "passed"
             except Exception:
-                pass
+                log.warning("[runs] Failed to parse run log for %s", run_id, exc_info=True)
 
         # Read run metadata (tags, workflow) if available
         run_tags = []
@@ -3060,7 +3215,7 @@ def list_job_runs(job_id: str) -> Dict[str, Any]:
                 run_tags = meta.get("tags", [])
                 run_workflow = meta.get("workflow", "")
             except Exception:
-                pass
+                log.warning("[runs] Failed to parse run metadata for %s", run_id, exc_info=True)
 
         # Parse duration from log start/end timestamps
         duration = 0
@@ -3083,7 +3238,7 @@ def list_job_runs(job_id: str) -> Dict[str, Any]:
                     t1 = datetime.strptime(last_ts, fmt)
                     duration = max(0, int((t1 - t0).total_seconds()))
             except Exception:
-                pass
+                log.warning("[runs] Failed to parse duration for run %s", run_id, exc_info=True)
 
         # Scan for group subdirectories (parallel run groups)
         groups = []
@@ -3128,7 +3283,7 @@ def list_job_runs(job_id: str) -> Dict[str, Any]:
                     "result": g_result,
                 })
             except Exception:
-                pass
+                log.warning("[runs] Failed to parse group in run %s", run_id, exc_info=True)
 
         runs.append({
             "runId": run_id,
@@ -3351,6 +3506,7 @@ def list_templates() -> List[Dict[str, Any]]:
             tpath = os.path.join(TEMPLATES_DIR, fname)
             templates.append(_read_json(tpath))
         except Exception:
+            log.warning("[template] Failed to load template %s", fname, exc_info=True)
             continue
     return templates
 
@@ -3362,7 +3518,13 @@ def delete_template(template_id: str) -> Dict[str, Any]:
     tpath = os.path.join(TEMPLATES_DIR, template_id + ".json")
     if not os.path.isfile(tpath):
         raise JobNotFoundError("Template not found")
-    os.remove(tpath)
+    try:
+        os.remove(tpath)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.error("[file] Failed to remove template %s: %s", tpath, e)
+        raise ValidationError(f"Cannot delete template: {e}")
     log.info("[template] Deleted template %s", template_id)
     return {"status": "deleted", "templateId": template_id}
 

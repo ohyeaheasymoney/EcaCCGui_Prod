@@ -1,8 +1,9 @@
 # config.py
+import os
 
 # ── Base Directories ─────────────────────────────────────────────
-BASE_DIR = "/home/eca/Downloads/DellServerAuto/Test4"  # NFS location where shared files are stored
-PROJECT_DIR = "/var/lib/rundeck/projects/ansible/DellServerAuto/MainPlayBook/Test4"  # Path to the Ansible playbook directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = BASE_DIR
 
 # ── CSV Paths ────────────────────────────────────────────────────
 MAC_FILE_PATH = f"{BASE_DIR}/asset_db_tags2.csv"  # Use the Workbook for serial, mac address, asset tag, and rack mappings

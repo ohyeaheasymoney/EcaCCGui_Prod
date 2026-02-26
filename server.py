@@ -130,7 +130,20 @@ def create_app():
     # ─────────────────────────────────────────────
     @app.route("/api/health")
     def api_health():
-        return jsonify({"status": "ok"})
+        checks = {}
+        # DB check
+        try:
+            backend._get_db().execute("SELECT 1").fetchone()
+            checks["db"] = "ok"
+        except Exception as e:
+            checks["db"] = str(e)
+        # Playbook root
+        checks["playbooks"] = "ok" if os.path.isdir(backend.PLAYBOOK_ROOT) else "missing"
+        # Jobs dir writable
+        checks["writable"] = "ok" if os.access(backend.JOBS_ROOT, os.W_OK) else "read-only"
+
+        ok = all(v == "ok" for v in checks.values())
+        return jsonify({"status": "ok" if ok else "degraded", "checks": checks}), 200 if ok else 503
 
     # ─────────────────────────────────────────────────
     # Authentication

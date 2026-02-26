@@ -18,7 +18,7 @@ set -e
 # ─── Config ───
 APP_USER="${ECA_USER:-eca}"
 APP_DIR="${ECA_APP_DIR:-/home/$APP_USER/eca-command-center}"
-PLAYBOOK_DIR="${ECA_PLAYBOOK_DIR:-/var/lib/rundeck/projects/ansible}"
+PLAYBOOK_DIR="${ECA_PLAYBOOK_DIR:-/home/eca/Downloads/UI/EcaCCGui_Prod}"
 PORT="${ECA_PORT:-5000}"
 
 RED='\033[0;31m'

@@ -2,7 +2,7 @@
 
 Web-based automation platform for Dell server provisioning, network switch configuration, and infrastructure management. Built on Flask + Ansible with a modular vanilla JS frontend.
 
-**Production instance** running on `10.3.3.10:5000` with playbook root at `/var/lib/rundeck/projects/ansible/`.
+**Production instance** running on `10.3.3.10:5000` with playbook root at `/home/eca/Downloads/UI/EcaCCGui_Prod/`.
 
 ## Features
 
@@ -78,7 +78,6 @@ EcaCCGui_Prod/
     ├── wizard.js              # Main app init + routing
     ├── wizard-modal.js        # New job creation wizard
     ├── workflow-logic.js      # Workflow definitions
-    ├── ui-config.js           # UI constants
     ├── theme.js               # Dark/light theme toggle
     ├── job-panel-core.js      # Job panel shell, tabs, shared state
     ├── job-panel-customer.js  # Customer/workflow definitions, selectors
@@ -97,7 +96,7 @@ EcaCCGui_Prod/
 
 - Python 3.9+
 - `ansible-playbook` in `$PATH`
-- Access to playbooks at `/var/lib/rundeck/projects/ansible/`
+- Access to playbooks at `/home/eca/Downloads/UI/EcaCCGui_Prod/`
 - `sudo arp-scan` configured with NOPASSWD in sudoers (for inventory network discovery)
 
 ### 1. Clone and install
@@ -195,7 +194,7 @@ Key settings in `config_backend.py`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOBS_ROOT` | `./jobs` | Where job folders and SQLite DB live |
-| `PLAYBOOK_ROOT` | `/var/lib/rundeck/projects/ansible` | Ansible playbook directory |
+| `PLAYBOOK_ROOT` | `(auto-detected from app location)` | Ansible playbook directory |
 | `MAX_CONCURRENT_RUNS` | `5` | Max simultaneous ansible-playbook processes |
 | `ALLOWED_UPLOAD_EXTS` | `.csv .xml .yml .exe .bin .img .tgz` | Accepted upload file types |
 | `NFS_HOST` | `10.3.3.10` | NFS server for shared storage |

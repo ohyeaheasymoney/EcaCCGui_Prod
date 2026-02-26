@@ -74,7 +74,7 @@ const CUSTOMER_DEFINITIONS = {
   servicenow: {
     label: "ServiceNow",
     description: "Full server deployment, provisioning, QC, network, and power automation.",
-    path: "/var/lib/rundeck/projects/ansible",
+    path: "",
     hasServerClass: true,
     tasks: _TASKS_STANDARD,
     workflows: _WORKFLOWS_STANDARD,
@@ -83,7 +83,7 @@ const CUSTOMER_DEFINITIONS = {
   openai: {
     label: "OpenAI",
     description: "Network switch automation — Cisco, Juniper, and console switch setup and firmware.",
-    path: "/var/lib/rundeck/projects/ansible",
+    path: "",
     hasServerClass: false,
     tasks: {
       cisco_switch:   _TASKS_STANDARD.cisco_switch,
@@ -104,7 +104,7 @@ const CUSTOMER_DEFINITIONS = {
   aes: {
     label: "AES",
     description: "Network switch automation — Cisco, Juniper, and console switch setup and firmware.",
-    path: "/var/lib/rundeck/projects/ansible",
+    path: "",
     hasServerClass: false,
     tasks: {
       cisco_switch:   _TASKS_STANDARD.cisco_switch,
@@ -125,7 +125,7 @@ const CUSTOMER_DEFINITIONS = {
   traderjoes: {
     label: "Trader Joe's",
     description: "Network switch automation — Cisco, Juniper, and console switch setup and firmware.",
-    path: "/var/lib/rundeck/projects/ansible",
+    path: "",
     hasServerClass: false,
     tasks: {
       cisco_switch:   _TASKS_STANDARD.cisco_switch,

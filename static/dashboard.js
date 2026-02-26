@@ -6,6 +6,34 @@
 let _connectionLost = false;
 let _reconnectAttempts = 0;
 
+// ─── Centralized Poll Manager (Issue #8) ───
+const _pollManager = {
+  _timers: {},
+  start(name, fn, ms) {
+    this.stop(name);
+    this._timers[name] = setInterval(fn, ms);
+  },
+  startOnce(name, fn, ms) {
+    this.stop(name);
+    this._timers[name] = setTimeout(() => { delete this._timers[name]; fn(); }, ms);
+  },
+  stop(name) {
+    if (this._timers[name]) {
+      clearInterval(this._timers[name]);
+      clearTimeout(this._timers[name]);
+      delete this._timers[name];
+    }
+  },
+  stopAll() {
+    Object.keys(this._timers).forEach(n => this.stop(n));
+  },
+};
+// Stop all polls on page unload / tab switch
+window.addEventListener("beforeunload", () => _pollManager.stopAll());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) _pollManager.stopAll();
+});
+
 function showConnectionBanner(lost) {
   let banner = $("connection-banner");
   if (lost) {
@@ -379,14 +407,12 @@ function buildDashJobCard(job) {
 // ─────────────────────────────────────────────────────────────
 // Running-job dashboard poll (lightweight progress updates)
 // ─────────────────────────────────────────────────────────────
-let _dashPollTimer = null;
-
 async function pollRunningDashboard() {
   const jobs = window._allJobs || [];
   const running = jobs.filter(j => j.status === "running");
 
   if (!running.length) {
-    _dashPollTimer = null;
+    _pollManager.stop("dashProgress");
     return;
   }
 
@@ -439,7 +465,7 @@ async function pollRunningDashboard() {
     }
   }
 
-  _dashPollTimer = setTimeout(pollRunningDashboard, 5000);
+  _pollManager.startOnce("dashProgress", pollRunningDashboard, 5000);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -607,8 +633,8 @@ async function loadJobs() {
 
     // Start running-job polling if any jobs are running
     const hasRunning = Array.isArray(jobs) && jobs.some(j => j.status === "running");
-    if (hasRunning && !_dashPollTimer) {
-      _dashPollTimer = setTimeout(pollRunningDashboard, 2000);
+    if (hasRunning) {
+      _pollManager.startOnce("dashProgress", pollRunningDashboard, 2000);
     }
 
     // Onboarding guide (Feature 11) — trigger on first visit
@@ -641,6 +667,93 @@ window.applyDateFilter = function () {
   saveFilterState();
   renderJobsFiltered(q, window._activeJobFilter || "all");
 };
+
+// ─── Job Row Helpers (Issue #9: DOM reconciliation) ───
+function _buildJobRowHtml(job) {
+  const jobId = job.jobId || job.id || job.job_id;
+  const hostCount = job.hostCount || 0;
+  const lastResult = job.lastRunResult || "";
+  const lastTags = Array.isArray(job.lastRunTags) && job.lastRunTags.length ? job.lastRunTags.join(", ") : "full";
+  const workflow = (job.workflow || "").toLowerCase();
+  const wfLabel = (window.WORKFLOW_LABELS && window.WORKFLOW_LABELS[workflow]) || workflow || "\u2014";
+  const createdAgo = job.createdAt ? timeAgo(job.createdAt) : "\u2014";
+
+  let lastRunHtml = '<span class="muted">\u2014</span>';
+  if (lastResult === "passed") {
+    lastRunHtml = `<span class="run-result run-result-passed"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="20 6 9 17 4 12"/></svg>${lastTags} \u2014 passed</span>`;
+  } else if (lastResult === "failed") {
+    lastRunHtml = `<span class="run-result run-result-failed"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>${lastTags} \u2014 failed</span>`;
+  } else if (job.lastRunId) {
+    lastRunHtml = `<span class="muted">${lastTags}</span>`;
+  }
+
+  return {
+    jobId,
+    cells: `
+      <td><input type="checkbox" class="bulk-cb" data-jobid="${safeText(jobId)}" onchange="updateBulkCount()" /></td>
+      <td>${safeText(job.jobName || job.name)} ${statusBadge(job.status)}</td>
+      <td>${safeText(wfLabel)}</td>
+      <td>${hostCount ? hostCount + " hosts" : '<span class="muted">\u2014</span>'}</td>
+      <td>${lastRunHtml}</td>
+      <td class="muted">${safeText(createdAgo)}</td>
+      <td>
+        <button class="btn ghost" data-jobid="${safeText(jobId)}">View</button>
+      </td>
+    `,
+  };
+}
+
+function _createJobRow(job) {
+  const { jobId, cells } = _buildJobRowHtml(job);
+  const tr = document.createElement("tr");
+  tr.setAttribute("data-jobid", jobId);
+  tr.innerHTML = cells;
+  // Wire view button
+  const btn = tr.querySelector('button[data-jobid]');
+  if (btn) {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openJobPanel(btn.getAttribute("data-jobid"));
+    });
+  }
+  return tr;
+}
+
+function _updateJobRow(tr, job) {
+  const { cells } = _buildJobRowHtml(job);
+  tr.innerHTML = cells;
+  // Re-wire view button
+  const btn = tr.querySelector('button[data-jobid]');
+  if (btn) {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openJobPanel(btn.getAttribute("data-jobid"));
+    });
+  }
+}
+
+function reconcileJobTable(tbody, filtered) {
+  const existing = new Map();
+  tbody.querySelectorAll("tr[data-jobid]").forEach(tr => existing.set(tr.dataset.jobid, tr));
+  const seen = new Set();
+  let insertBefore = null;  // for ordering: append in order by removing and re-inserting
+  filtered.forEach((job, idx) => {
+    const id = job.jobId || job.id || job.job_id;
+    seen.add(id);
+    if (existing.has(id)) {
+      const tr = existing.get(id);
+      _updateJobRow(tr, job);
+      // Ensure correct order
+      tbody.appendChild(tr);
+    } else {
+      tbody.appendChild(_createJobRow(job));
+    }
+  });
+  // Remove stale rows
+  existing.forEach((tr, id) => { if (!seen.has(id)) tr.remove(); });
+}
 
 window.renderJobsFiltered = function (textFilter, statusFilter) {
   const tbody = $("job-table-body");
@@ -702,60 +815,16 @@ window.renderJobsFiltered = function (textFilter, statusFilter) {
     return sortJobs(a, b, window._sortCol, window._sortDir);
   });
 
-  tbody.innerHTML = "";
-  filtered.forEach(job => {
-    const jobId = job.jobId || job.id || job.job_id;
-    const hostCount = job.hostCount || 0;
-    const lastResult = job.lastRunResult || "";
-    const lastTags = Array.isArray(job.lastRunTags) && job.lastRunTags.length ? job.lastRunTags.join(", ") : "full";
-    const workflow = (job.workflow || "").toLowerCase();
-    const wfLabel = (window.WORKFLOW_LABELS && window.WORKFLOW_LABELS[workflow]) || workflow || "\u2014";
-    const createdAgo = job.createdAt ? timeAgo(job.createdAt) : "\u2014";
-
-    let lastRunHtml = '<span class="muted">\u2014</span>';
-    if (lastResult === "passed") {
-      lastRunHtml = `<span class="run-result run-result-passed"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="20 6 9 17 4 12"/></svg>${lastTags} \u2014 passed</span>`;
-    } else if (lastResult === "failed") {
-      lastRunHtml = `<span class="run-result run-result-failed"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>${lastTags} \u2014 failed</span>`;
-    } else if (job.lastRunId) {
-      lastRunHtml = `<span class="muted">${lastTags}</span>`;
-    }
-
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><input type="checkbox" class="bulk-cb" data-jobid="${safeText(jobId)}" onchange="updateBulkCount()" /></td>
-      <td>${safeText(job.jobName || job.name)} ${statusBadge(job.status)}</td>
-      <td>${safeText(wfLabel)}</td>
-      <td>${hostCount ? hostCount + " hosts" : '<span class="muted">\u2014</span>'}</td>
-      <td>${lastRunHtml}</td>
-      <td class="muted">${safeText(createdAgo)}</td>
-      <td>
-        <button class="btn ghost" data-jobid="${safeText(jobId)}">View</button>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
-
-  qsa('button[data-jobid]', tbody).forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openJobPanel(btn.getAttribute("data-jobid"));
-    });
-  });
+  // DOM reconciliation: update existing rows, add new, remove stale
+  reconcileJobTable(tbody, filtered);
 };
 
 // ─────────────────────────────────────────────────────────────
 // Polling
 // ─────────────────────────────────────────────────────────────
-let jobRefreshTimer = null;
-
 function startJobPolling() {
-  if (jobRefreshTimer) clearInterval(jobRefreshTimer);
-  jobRefreshTimer = setInterval(loadJobs, 30000);
+  _pollManager.start("jobRefresh", loadJobs, 30000);
 }
-
-let healthTimer = null;
 
 async function pollHealth() {
   const dot = $("health-dot");
@@ -776,7 +845,7 @@ async function pollHealth() {
     }
     _reconnectAttempts++;
   }
-  healthTimer = setTimeout(pollHealth, 15000);
+  _pollManager.startOnce("health", pollHealth, 15000);
 }
 
 // ─────────────────────────────────────────────────────────────

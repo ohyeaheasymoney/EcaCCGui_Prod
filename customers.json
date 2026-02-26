@@ -2,7 +2,7 @@
   "servicenow": {
     "label": "ServiceNow",
     "description": "Full server deployment, provisioning, QC, network, and power automation.",
-    "path": "/var/lib/rundeck/projects/ansible",
+    "path": "/home/eca/Downloads/UI/EcaCCGui_Prod",
     "hasServerClass": true,
     "workflows": [
       "configbuild",
@@ -17,7 +17,7 @@
   "openai": {
     "label": "OpenAI",
     "description": "Network switch automation \u2014 Cisco, Juniper, and console switch setup and firmware.",
-    "path": "/var/lib/rundeck/projects/ansible",
+    "path": "/home/eca/Downloads/UI/EcaCCGui_Prod",
     "hasServerClass": false,
     "enabled": false,
     "workflows": [
@@ -30,7 +30,7 @@
   "aes": {
     "label": "AES",
     "description": "Network switch automation \u2014 Cisco, Juniper, and console switch setup and firmware.",
-    "path": "/var/lib/rundeck/projects/ansible",
+    "path": "/home/eca/Downloads/UI/EcaCCGui_Prod",
     "hasServerClass": false,
     "enabled": false,
     "workflows": [
@@ -43,7 +43,7 @@
   "traderjoes": {
     "label": "Trader Joe's",
     "description": "Network switch automation \u2014 Cisco, Juniper, and console switch setup and firmware.",
-    "path": "/var/lib/rundeck/projects/ansible",
+    "path": "/home/eca/Downloads/UI/EcaCCGui_Prod",
     "hasServerClass": false,
     "enabled": false,
     "workflows": [
