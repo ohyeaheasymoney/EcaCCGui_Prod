@@ -1,6 +1,8 @@
-# ECA Command Center
+# ECA Command Center — Production
 
 Web-based automation platform for Dell server provisioning, network switch configuration, and infrastructure management. Built on Flask + Ansible with a modular vanilla JS frontend.
+
+**Production instance** running on `10.3.3.10:5000` with playbook root at `/var/lib/rundeck/projects/ansible/`.
 
 ## Features
 
@@ -53,7 +55,7 @@ Web-based automation platform for Dell server provisioning, network switch confi
 ## Project Structure
 
 ```
-ansible-ui/
+EcaCCGui_Prod/
 ├── server.py                  # Flask app entry point + API routes
 ├── config_backend.py          # Business logic, job/inventory/TSR management
 ├── start.sh                   # Production launcher (gunicorn)
@@ -95,14 +97,14 @@ ansible-ui/
 
 - Python 3.9+
 - `ansible-playbook` in `$PATH`
-- Access to playbooks at `/var/lib/rundeck/projects/ansible/DellServerAuto/MainPlayBook/Test4/DellServerAuto_4`
+- Access to playbooks at `/var/lib/rundeck/projects/ansible/`
 - `sudo arp-scan` configured with NOPASSWD in sudoers (for inventory network discovery)
 
 ### 1. Clone and install
 
 ```bash
-git clone git@github.com:ohyeaheasymoney/EcaAutomationOps.git
-cd EcaAutomationOps
+git clone git@github.com:ohyeaheasymoney/EcaCCGui_Prod.git
+cd EcaCCGui_Prod
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -145,16 +147,16 @@ Then access the app on port 80 instead of 5000.
 Create a systemd unit to auto-start on boot:
 
 ```bash
-sudo tee /etc/systemd/system/eca.service << 'EOF'
+sudo tee /etc/systemd/system/eca-prod.service << 'EOF'
 [Unit]
-Description=ECA Command Center
+Description=ECA Command Center (Production)
 After=network.target
 
 [Service]
 Type=exec
 User=eca
-WorkingDirectory=/home/eca/Downloads/UI/ansible-ui
-ExecStart=/home/eca/Downloads/UI/ansible-ui/venv/bin/gunicorn server:app -w 4 --threads 4 -b 0.0.0.0:5000 --timeout 300 --access-logfile -
+WorkingDirectory=/home/eca/Downloads/UI/EcaCCGui_Prod
+ExecStart=/home/eca/Downloads/UI/EcaCCGui_Prod/venv/bin/gunicorn server:app -w 4 --threads 4 -b 0.0.0.0:5000 --timeout 300 --access-logfile -
 Restart=on-failure
 RestartSec=5
 
@@ -163,14 +165,14 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now eca
+sudo systemctl enable --now eca-prod
 ```
 
 Check status:
 
 ```bash
-sudo systemctl status eca
-journalctl -u eca -f
+sudo systemctl status eca-prod
+journalctl -u eca-prod -f
 ```
 
 ### Restarting
@@ -180,7 +182,7 @@ journalctl -u eca -f
 pkill -f gunicorn && bash start.sh
 
 # If running as systemd service
-sudo systemctl restart eca
+sudo systemctl restart eca-prod
 
 # If running dev server
 pkill -f "python.*server.py" && python3 server.py
@@ -193,10 +195,10 @@ Key settings in `config_backend.py`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOBS_ROOT` | `./jobs` | Where job folders and SQLite DB live |
-| `PLAYBOOK_ROOT` | `/var/lib/rundeck/.../DellServerAuto_4` | Ansible playbook directory |
+| `PLAYBOOK_ROOT` | `/var/lib/rundeck/projects/ansible` | Ansible playbook directory |
 | `MAX_CONCURRENT_RUNS` | `5` | Max simultaneous ansible-playbook processes |
 | `ALLOWED_UPLOAD_EXTS` | `.csv .xml .yml .exe .bin .img .tgz` | Accepted upload file types |
-| `NFS_HOST` | `192.168.0.120` | NFS server for shared storage |
+| `NFS_HOST` | `10.3.3.10` | NFS server for shared storage |
 
 ## Workflows
 
