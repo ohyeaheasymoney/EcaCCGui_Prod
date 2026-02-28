@@ -924,7 +924,7 @@ def _ensure_job_dirs(job_id: str) -> None:
     os.makedirs(os.path.join(_job_dir(job_id), "TSR"), exist_ok=True)
     os.makedirs(os.path.join(_job_dir(job_id), "QuickQC"), exist_ok=True)
 
-NFS_HOST = "10.3.3.10"
+NFS_HOST = os.environ.get("ECA_NFS_HOST", "10.3.3.10")
 
 
 def _generate_vars_yml(job_id: str, _job: Optional[Dict[str, Any]] = None) -> str:

@@ -56,7 +56,8 @@ def create_app():
         static_url_path="/static"   # IMPORTANT
     )
 
-    CORS(app, origins=os.environ.get("ECA_CORS_ORIGINS", "http://localhost:5000").split(","),
+    _port = os.environ.get("ECA_PORT", "5000")
+    CORS(app, origins=os.environ.get("ECA_CORS_ORIGINS", f"http://localhost:{_port}").split(","),
          supports_credentials=True)
 
     app.secret_key = os.environ.get("ECA_SECRET_KEY", secrets.token_hex(32))
@@ -598,4 +599,4 @@ def create_app():
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("ECA_PORT", "5000")))
