@@ -19,8 +19,10 @@ function applyTheme(theme) {
 window.toggleTheme = function () {
   const current = localStorage.getItem("theme") || "dark";
   const next = current === "dark" ? "light" : "dark";
+  document.body.classList.add("theme-transitioning");
   localStorage.setItem("theme", next);
   applyTheme(next);
+  setTimeout(() => document.body.classList.remove("theme-transitioning"), 350);
 };
 
 // Apply saved theme immediately
@@ -57,13 +59,34 @@ function showToast(message, type = "info", duration = 3500, opts = {}) {
     toast.appendChild(btn);
   }
 
+  // Dismiss button
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "toast-close";
+  closeBtn.innerHTML = "&times;";
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    clearTimeout(timer);
+    toast.classList.remove("toast-visible");
+    toast.addEventListener("transitionend", () => toast.remove());
+  });
+  toast.appendChild(closeBtn);
+
   container.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add("toast-visible"));
 
-  const timer = setTimeout(() => {
+  let timer = setTimeout(() => {
     toast.classList.remove("toast-visible");
     toast.addEventListener("transitionend", () => toast.remove());
   }, duration);
+
+  // Pause auto-dismiss on hover
+  toast.addEventListener("mouseenter", () => clearTimeout(timer));
+  toast.addEventListener("mouseleave", () => {
+    timer = setTimeout(() => {
+      toast.classList.remove("toast-visible");
+      toast.addEventListener("transitionend", () => toast.remove());
+    }, duration);
+  });
 
   toast.addEventListener("click", () => {
     clearTimeout(timer);

@@ -6,6 +6,12 @@
 // audit admin actions, bulk user actions, lastModified, expandable audit
 // ─────────────────────────────────────────────────────────────
 
+var _adminSearchTimer = null;
+function _debounceAdminSearch(fn) {
+  clearTimeout(_adminSearchTimer);
+  _adminSearchTimer = setTimeout(fn, 300);
+}
+
 var _adminTabLoaded = {};
 var _auditPollTimer = null;
 var _auditAutoRefresh = false;
@@ -527,7 +533,7 @@ function _usersHeaderHtml() {
       </div>
     </div>
     <div class="admin-filter-bar">
-      <input class="inp" id="admin-user-search" placeholder="Search username..." value="${safeText(_usersFilterText)}" style="font-size:12px;" onkeydown="if(event.key==='Enter')_applyUserFilter()" />
+      <input class="inp" id="admin-user-search" placeholder="Search username..." value="${safeText(_usersFilterText)}" style="font-size:12px;" oninput="_debounceAdminSearch(_applyUserFilter)" onkeydown="if(event.key==='Enter')_applyUserFilter()" />
       <select id="admin-user-role-filter" style="padding:5px 10px;border-radius:6px;border:1px solid var(--card-border);background:var(--card-bg);color:var(--text-primary);font-size:12px;">
         <option value="" ${!_usersFilterRole ? 'selected' : ''}>All Roles</option>
         <option value="admin" ${_usersFilterRole === 'admin' ? 'selected' : ''}>Admin</option>
@@ -687,20 +693,25 @@ window._togglePermEditor = async function (username) {
   // Close previous
   if (_openPermUser && _openPermUser !== username) {
     var prevRow = $("perm-row-" + _openPermUser);
-    if (prevRow) prevRow.style.display = "none";
+    if (prevRow) {
+      prevRow.classList.remove("expanded");
+      prevRow.style.display = "none";
+    }
   }
 
   var row = $("perm-row-" + username);
   if (!row) return;
 
   // Toggle
-  if (row.style.display !== "none") {
-    row.style.display = "none";
+  if (row.classList.contains("expanded")) {
+    row.classList.remove("expanded");
+    setTimeout(() => { row.style.display = "none"; }, 300);
     _openPermUser = null;
     return;
   }
   _openPermUser = username;
   row.style.display = "";
+  requestAnimationFrame(() => row.classList.add("expanded"));
 
   var editor = $("perm-editor-" + username);
   if (!editor) return;
@@ -803,7 +814,7 @@ async function loadAdminCustomers() {
         </div>
       </div>
       <div class="admin-filter-bar">
-        <input class="inp" id="admin-cust-search" placeholder="Search ID or label..." value="${safeText(_custFilterText)}" style="font-size:12px;" onkeydown="if(event.key==='Enter')_applyCustFilter()" />
+        <input class="inp" id="admin-cust-search" placeholder="Search ID or label..." value="${safeText(_custFilterText)}" style="font-size:12px;" oninput="_debounceAdminSearch(_applyCustFilter)" onkeydown="if(event.key==='Enter')_applyCustFilter()" />
         <button class="btn btn-sm ghost" onclick="_applyCustFilter()">Apply</button>
         ${_custFilterText ? '<button class="btn btn-sm ghost" onclick="_clearCustFilter()">Clear</button>' : ''}
       </div>`;
@@ -1466,7 +1477,7 @@ async function loadAdminAudit(offset) {
           <option value="CLONE">CLONE</option>
           <option value="ADMIN">ADMIN</option>
         </select>
-        <input class="inp" id="audit-search-input" placeholder="Search user, job, detail..." style="font-size:12px;" onkeydown="if(event.key==='Enter')_applyAuditFilters()" />
+        <input class="inp" id="audit-search-input" placeholder="Search user, job, detail..." style="font-size:12px;" oninput="_debounceAdminSearch(_applyAuditFilters)" onkeydown="if(event.key==='Enter')_applyAuditFilters()" />
         <button class="btn btn-sm ghost" onclick="_applyAuditFilters()">Apply</button>
         <button class="btn btn-sm ghost" onclick="_clearAuditFilters()">Clear</button>
       </div>

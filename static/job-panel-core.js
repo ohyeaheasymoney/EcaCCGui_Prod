@@ -212,6 +212,12 @@ async function openJobPanel(jobId) {
     </div>
   `;
 
+  // Fade in backdrop
+  requestAnimationFrame(() => {
+    const bd = document.querySelector(".panel-backdrop");
+    if (bd) bd.classList.add("backdrop-visible");
+  });
+
   try {
     const job = await apiGet(`/api/jobs/${encodeURIComponent(jobId)}`);
     renderJobPanel(job);
@@ -1054,10 +1060,19 @@ function wireInlineEditConfirm(panel, jobId) {
       if (saveBtn) {
         saveBtn.addEventListener("click", async (e) => {
           e.preventDefault();
-          await saveJobField(encodeURIComponent(jobId), field, input.value);
-          _dirtyFields.delete(field);
-          actionsEl.classList.remove("visible");
-          input.blur();
+          actionsEl.classList.add("ie-saving");
+          try {
+            await saveJobField(encodeURIComponent(jobId), field, input.value);
+            _dirtyFields.delete(field);
+            actionsEl.classList.remove("ie-saving");
+            actionsEl.classList.add("ie-saved");
+            setTimeout(() => actionsEl.classList.remove("ie-saved"), 1200);
+            actionsEl.classList.remove("visible");
+            input.blur();
+          } catch (err) {
+            actionsEl.classList.remove("ie-saving");
+            showToast("Failed to save " + field, "error");
+          }
         });
       }
 

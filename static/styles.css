@@ -2018,7 +2018,7 @@ body.theme-transitioning * {
 [data-theme="light"] .section p.muted { color: #4b5563; }
 
 [data-theme="light"] .inp { color: #1f2937; border-color: rgba(0,0,0,0.2); }
-[data-theme="light"] .inp::placeholder { color: #9ca3af; }
+[data-theme="light"] .inp::placeholder { color: #6b7280; }
 [data-theme="light"] .inp:focus { border-color: #3b82f6; }
 
 [data-theme="light"] .task-chip { color: #374151; border-color: rgba(0,0,0,0.12); }
@@ -2507,12 +2507,12 @@ body.theme-transitioning * {
   border-radius: 50%;
   background: #3b82f6;
   box-shadow: 0 0 6px 2px rgba(59,130,246,0.5);
-  animation: liveDotPulse 1.5s ease-in-out infinite;
+  animation: liveDotPulse 2s ease-in-out infinite;
   flex-shrink: 0;
 }
 @keyframes liveDotPulse {
-  0%, 100% { box-shadow: 0 0 6px 2px rgba(59,130,246,0.5); opacity: 1; }
-  50%      { box-shadow: 0 0 10px 4px rgba(59,130,246,0.7); opacity: 0.8; }
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(59,130,246,0.4); opacity: 1; }
+  50%      { box-shadow: 0 0 0 4px rgba(59,130,246,0.5); opacity: 0.85; }
 }
 
 /* =========================================================
@@ -3393,8 +3393,8 @@ body.theme-transitioning * {
 }
 
 .inline-progress-indeterminate {
-  width: 40% !important;
-  animation: progress-indeterminate 1.4s ease-in-out infinite;
+  width: 30% !important;
+  animation: progress-shimmer 1.4s ease-in-out infinite;
 }
 
 /* =========================================================
@@ -4101,7 +4101,7 @@ body.theme-transitioning * {
 ========================================================= */
 
 .status-badge {
-  transition: background 0.4s, color 0.4s;
+  transition: background 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
 }
 
 @keyframes badge-pulse {
@@ -5210,12 +5210,7 @@ body.theme-transitioning * {
 }
 .admin-table th.sortable:hover { color: var(--text-primary); }
 .admin-table th.sortable::after {
-  content: ""; position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-  border: 4px solid transparent; border-top: 5px solid var(--text-muted); opacity: 0.4;
-}
-.admin-table th.sortable.sort-asc::after { border-top: 5px solid #3b82f6; opacity: 1; }
-.admin-table th.sortable.sort-desc::after {
-  border-top: none; border-bottom: 5px solid #3b82f6; opacity: 1;
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
 }
 
 /* Bulk action bar */
@@ -7089,4 +7084,170 @@ tr:hover .csv-del-row-btn {
 .qc-downloads a {
   font-size: 11px;
   padding: 3px 10px;
+}
+
+/* =========================================================
+   GUI POLISH PASS — Animations, Focus, Transitions
+========================================================= */
+
+/* 1a. Panel backdrop fade */
+.panel-backdrop {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.panel-backdrop.backdrop-visible {
+  opacity: 1;
+}
+
+/* 1c. Status badge transitions */
+.status-badge {
+  transition: background 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* 1d. Toast dismiss button */
+.toast {
+  position: relative;
+  padding-right: 32px;
+}
+.toast-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.toast-close:hover {
+  opacity: 1;
+  background: rgba(255,255,255,0.15);
+}
+
+/* 1e. Toned-down live dot pulse */
+
+/* 2a. Input focus rings */
+.inp:focus {
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+  outline: none;
+  border-color: #3b82f6;
+}
+[data-theme="light"] .inp:focus {
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+}
+
+/* 2b. Wizard validation error styles */
+.field-error {
+  color: #f87171;
+  font-size: 11px;
+  margin-top: 4px;
+}
+.inp.invalid {
+  border-color: #f87171 !important;
+}
+.inp.invalid:focus {
+  box-shadow: 0 0 0 3px rgba(248,113,113,0.2);
+}
+
+/* 2c. Inline edit save spinner + checkmark */
+.ie-saving .ie-save::after {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ie-spin 0.6s linear infinite;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+@keyframes ie-spin {
+  to { transform: rotate(360deg); }
+}
+.ie-saved .ie-save {
+  color: #4ade80 !important;
+}
+
+/* 2d. Required field markers */
+.required-mark {
+  color: #f87171;
+  margin-left: 2px;
+}
+
+/* 2e. Placeholder contrast */
+::placeholder {
+  color: #94a3b8;
+}
+[data-theme="light"] ::placeholder {
+  color: #6b7280;
+}
+
+/* 2f. Wizard step body fade transition */
+#wiz-step-body {
+  transition: opacity 0.2s ease;
+}
+
+/* 3a. Indeterminate progress bar (shimmer) */
+.inline-progress-fill.inline-progress-indeterminate {
+  width: 30% !important;
+  animation: progress-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes progress-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+/* 4b. Permission row expand animation */
+.perm-expand-row .perm-editor {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  opacity: 0;
+}
+.perm-expand-row.expanded .perm-editor {
+  max-height: 500px;
+  opacity: 1;
+}
+
+/* 4c. Danger modal variant */
+.confirm-card.danger {
+  border-color: rgba(248,113,113,0.3);
+}
+.confirm-card.danger .confirm-title {
+  color: #f87171;
+}
+.confirm-card.danger .btn.primary {
+  background: #ef4444;
+  border-color: #ef4444;
+}
+.confirm-card.danger .btn.primary:hover {
+  background: #dc2626;
+}
+
+/* 4d. Sort header indicators (admin tables) */
+.admin-table th.sortable::after {
+  content: "\25B2\25BC";
+  opacity: 0.2;
+  font-size: 8px;
+  margin-left: 3px;
+  letter-spacing: -2px;
+}
+.admin-table th.sortable.sort-asc::after {
+  content: "\25B2";
+  opacity: 0.7;
+  color: #3b82f6;
+  font-size: 9px;
+  letter-spacing: normal;
+}
+.admin-table th.sortable.sort-desc::after {
+  content: "\25BC";
+  opacity: 0.7;
+  color: #3b82f6;
+  font-size: 9px;
+  letter-spacing: normal;
 }

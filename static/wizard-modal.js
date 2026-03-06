@@ -64,17 +64,18 @@ function _wizBuildWorkflowOptions(customer) {
 
 function _wizStepIndicator(activeStep) {
   const stepDefs = [
-    { num: 1, label: "Workflow" },
-    { num: 2, label: "Details" },
-    { num: 3, label: "Upload" },
+    { num: 1, label: "Workflow", sub: "Choose automation type" },
+    { num: 2, label: "Details", sub: "Name & identifiers" },
+    { num: 3, label: "Upload", sub: "CSV workbook" },
   ];
   return `<div class="wizard-steps">${stepDefs.map((s, i) => {
     const cls = s.num < activeStep ? "done" : s.num === activeStep ? "active" : "";
-    const checkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    const checkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
     return (i > 0 ? `<div class="wizard-step-line${s.num <= activeStep ? " done" : ""}"></div>` : "") +
       `<div class="wizard-step ${cls}">
         <div class="wizard-step-num">${cls === "done" ? checkSvg : s.num}</div>
         <div class="wizard-step-label">${s.label}</div>
+        <div class="wizard-step-sub">${s.sub}</div>
       </div>`;
   }).join("")}</div>`;
 }
@@ -86,8 +87,22 @@ function _wizRenderStep() {
   const indicator = $("wiz-step-indicator");
   if (!body) return;
 
+  // Fade out, swap content, fade in
+  body.style.opacity = "0";
+  setTimeout(() => {
+    _wizRenderStepContent(body, backBtn, nextBtn, indicator);
+    body.style.opacity = "1";
+  }, 180);
+}
+
+function _wizRenderStepContent(body, backBtn, nextBtn, indicator) {
+
   // Update step indicator
   if (indicator) indicator.innerHTML = _wizStepIndicator(_wizStep);
+
+  // Update step count text in footer
+  const stepCount = $("wiz-step-count");
+  if (stepCount) stepCount.textContent = `Step ${_wizStep} of 3`;
 
   // Show/hide back button
   if (backBtn) backBtn.style.display = _wizStep > 1 ? "" : "none";
@@ -107,36 +122,52 @@ function _wizRenderStep() {
     const custVal = $("wiz_customer") ? $("wiz_customer").value : "servicenow";
     const wfOptionsHtml = _wizBuildWorkflowOptions(custVal);
     const wfVal = $("wiz_workflow") ? $("wiz_workflow").value : "";
+    const scVal = window._wizSavedFields?.serverClass || "J";
+
+    // Icons for customer/workflow labels
+    const custIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+    const wfIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9"/></svg>';
 
     body.innerHTML = `
-      <div class="section" id="wiz-template-section">
-        <h4>Start from Template</h4>
-        <p class="muted" style="margin-bottom:6px;font-size:11px;">Optionally select a saved template to pre-fill fields.</p>
-        <select id="wiz_template" class="inp" style="width:100%;" onchange="wizApplyTemplate()">
-          <option value="">No template (start fresh)</option>
-        </select>
-      </div>
       <div class="section">
-        <h4>Customer</h4>
+        <h4>${custIcon}Customer</h4>
         <p class="muted" style="margin-bottom:6px;font-size:11px;">Select the customer for this job.</p>
-        <select id="wiz_customer" class="inp" style="width:100%;" onchange="wizOnCustomerChange()">
+        <select id="wiz_customer" class="inp wiz-select-lg" style="width:100%;" onchange="wizOnCustomerChange()">
           ${customerOptionsHtml}
         </select>
       </div>
       <div class="section">
-        <h4>Workflow</h4>
+        <h4>${wfIcon}Workflow</h4>
         <p class="muted" style="margin-bottom:6px;font-size:11px;">Choose the automation workflow for this job.</p>
-        <select id="wiz_workflow" class="inp" style="width:100%;" onchange="wizOnWorkflowChange()">
+        <select id="wiz_workflow" class="inp wiz-select-lg" style="width:100%;" onchange="wizOnWorkflowChange()">
           ${wfOptionsHtml}
         </select>
       </div>
       <div class="section" id="wiz_server_class_section" style="display:none;">
         <h4>Server Class</h4>
         <p class="muted" style="margin-bottom:6px;font-size:11px;">Select the server class for the build.</p>
-        <select id="wiz_server_class" class="inp" style="width:100%;">
-          <option value="J">J Class</option>
-          <option value="I">I Class</option>
-        </select>
+        <div class="wiz-radio-group">
+          <label class="wiz-radio-card${scVal === 'J' ? ' wiz-radio-active' : ''}" tabindex="0">
+            <input type="radio" name="wiz_server_class" value="J" ${scVal === 'J' ? 'checked' : ''} onchange="document.querySelectorAll('.wiz-radio-card').forEach(c=>c.classList.remove('wiz-radio-active'));this.closest('.wiz-radio-card').classList.add('wiz-radio-active');" />
+            <span class="wiz-radio-label">J Class</span>
+          </label>
+          <label class="wiz-radio-card${scVal === 'I' ? ' wiz-radio-active' : ''}" tabindex="0">
+            <input type="radio" name="wiz_server_class" value="I" ${scVal === 'I' ? 'checked' : ''} onchange="document.querySelectorAll('.wiz-radio-card').forEach(c=>c.classList.remove('wiz-radio-active'));this.closest('.wiz-radio-card').classList.add('wiz-radio-active');" />
+            <span class="wiz-radio-label">I Class</span>
+          </label>
+        </div>
+      </div>
+      <div class="section wiz-template-collapsed" id="wiz-template-section">
+        <button class="wiz-template-toggle" onclick="this.parentElement.classList.toggle('wiz-template-expanded')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="wiz-template-chevron"><path d="M6 9l6 6 6-6"/></svg>
+          Start from Template
+        </button>
+        <div class="wiz-template-body">
+          <p class="muted" style="margin-bottom:6px;font-size:11px;">Optionally select a saved template to pre-fill fields.</p>
+          <select id="wiz_template" class="inp" style="width:100%;" onchange="wizApplyTemplate()">
+            <option value="">No template (start fresh)</option>
+          </select>
+        </div>
       </div>
     `;
 
@@ -156,28 +187,30 @@ function _wizRenderStep() {
 
   } else if (_wizStep === 2) {
     body.innerHTML = `
-      <div class="section">
-        <h4>Job Name</h4>
-        <p class="muted" style="margin-bottom:6px;font-size:11px;">A descriptive name for this job. Click <strong>Auto</strong> to generate one.</p>
-        <div class="row">
-          <input id="wiz_job_name" class="inp" style="flex:1;" placeholder="Auto-generated or type your own" oninput="this.dataset.manual='true'" />
-          <button class="btn ghost" style="white-space:nowrap;border-radius:999px;padding:8px 16px;" onclick="$('wiz_job_name').dataset.manual='false'; wizAutoName();"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Auto</button>
+      <div class="section wiz-section-name">
+        <h4>Job Name<span class="required-mark">*</span></h4>
+        <p class="muted" style="margin-bottom:8px;font-size:11px;">A descriptive name for this job.</p>
+        <div class="wiz-name-input-wrap">
+          <input id="wiz_job_name" class="inp wiz-name-input" placeholder="Auto-generated or type your own" oninput="this.dataset.manual='true'" />
+          <button class="wiz-auto-btn" onclick="$('wiz_job_name').dataset.manual='false'; wizAutoName();" title="Auto-generate name">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
         </div>
       </div>
       <div class="section">
         <h4>Additional Details</h4>
-        <p class="muted" style="margin-bottom:6px;font-size:11px;">Optional fields to help identify and track this job.</p>
+        <p class="muted" style="margin-bottom:8px;font-size:11px;">Optional fields to help identify and track this job.</p>
         <div class="wizard-form-grid">
           <div class="field-group">
-            <label class="muted">Rack ID</label>
+            <label>Rack ID</label>
             <input id="wiz_rack_id" class="inp" placeholder="e.g. R01" oninput="wizAutoName()" />
           </div>
           <div class="field-group">
-            <label class="muted">SKU</label>
+            <label>SKU</label>
             <input id="wiz_sku" class="inp" placeholder="e.g. PowerEdge R760" />
           </div>
           <div class="field-group">
-            <label class="muted">P.O.</label>
+            <label>P.O.</label>
             <input id="wiz_po" class="inp" placeholder="e.g. PO-2026-0042" />
           </div>
         </div>
@@ -213,7 +246,7 @@ function _wizRenderStep() {
 
   } else if (_wizStep === 3) {
     const csvInfo = window._wizPendingCSV
-      ? `<div class="wiz-csv-info"><span style="color:#4ade80;font-weight:600;">${safeText(window._wizPendingCSV.name)}</span> <span class="muted">(${(window._wizPendingCSV.size / 1024).toFixed(1)} KB)</span> <button class="btn ghost" style="font-size:11px;padding:2px 8px;margin-left:8px;" onclick="window._wizPendingCSV=null;_wizRenderStep();">Remove</button></div>`
+      ? `<div class="wiz-csv-info"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span style="color:#4ade80;font-weight:600;">${safeText(window._wizPendingCSV.name)}</span> <span class="muted">(${(window._wizPendingCSV.size / 1024).toFixed(1)} KB)</span> <button class="btn ghost" style="font-size:11px;padding:2px 8px;margin-left:auto;" onclick="window._wizPendingCSV=null;_wizRenderStep();">Remove</button></div>`
       : "";
 
     body.innerHTML = `
@@ -221,14 +254,14 @@ function _wizRenderStep() {
         <h4>Upload CSV Workbook</h4>
         <p class="muted" style="margin-bottom:10px;font-size:11px;">Optionally upload a CSV workbook now, or skip and upload later from the job panel.</p>
         ${csvInfo}
-        <div class="wiz-drop-zone" id="wiz-drop-zone">
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4;margin-bottom:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          <div style="font-size:13px;font-weight:500;">Drop CSV file here or click to browse</div>
-          <div class="muted" style="font-size:11px;margin-top:2px;">Accepts .csv, .xlsx workbook files</div>
+        <div class="wiz-drop-zone wiz-drop-zone-lg" id="wiz-drop-zone">
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.35;margin-bottom:8px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <div style="font-size:14px;font-weight:500;">Drop CSV file here or click to browse</div>
+          <div class="muted" style="font-size:11px;margin-top:4px;">Accepts .csv, .xlsx workbook files</div>
           <input type="file" id="wiz-csv-input" accept=".csv,.xlsx,.xls" style="display:none;" />
         </div>
-        <div style="text-align:center;margin-top:10px;">
-          <button class="btn ghost" style="font-size:12px;" onclick="window._wizPendingCSV=null;_wizRenderStep();">Skip &mdash; I'll upload later</button>
+        <div class="wiz-skip-row">
+          <a href="javascript:void(0)" class="wiz-skip-link" onclick="window._wizPendingCSV=null;_wizRenderStep();">Skip &mdash; I'll upload later</a>
         </div>
       </div>
     `;
@@ -274,10 +307,10 @@ function _wizSaveCurrentStep() {
   if (_wizStep === 1) {
     const custSel = $("wiz_customer");
     const wfSel = $("wiz_workflow");
-    const scSel = $("wiz_server_class");
+    const scRadio = document.querySelector('input[name="wiz_server_class"]:checked');
     if (custSel) window._wizSavedFields.customer = custSel.value;
     if (wfSel) window._wizSavedFields.workflow = wfSel.value;
-    if (scSel) window._wizSavedFields.serverClass = scSel.value;
+    if (scRadio) window._wizSavedFields.serverClass = scRadio.value;
   } else if (_wizStep === 2) {
     const nameEl = $("wiz_job_name");
     const rackEl = $("wiz_rack_id");
@@ -338,11 +371,12 @@ function launchWizard(presetCustomer, presetWorkflow) {
           <pre id="wiz_out" class="output"></pre>
         </div>
 
-        <div class="modal-footer">
+        <div class="modal-footer wiz-footer">
           <button class="btn ghost" id="wiz-back-btn" style="display:none;" onclick="wizGoBack()">Back</button>
+          <span class="wiz-step-count muted" id="wiz-step-count">Step 1 of 3</span>
           <div style="flex:1;"></div>
           <button class="btn ghost" onclick="closeWizardModal()">Cancel</button>
-          <button class="btn primary" id="wiz-next-btn" onclick="wizGoNext()" style="padding:10px 20px;">Next</button>
+          <button class="btn primary wiz-next-btn" id="wiz-next-btn" onclick="wizGoNext()">Next</button>
         </div>
       </div>
     </div>
@@ -367,6 +401,27 @@ window.wizGoBack = function () {
 };
 
 window.wizGoNext = function () {
+  // Validate step 2: job name required
+  if (_wizStep === 2) {
+    const nameInput = $("wiz_job_name");
+    const nameVal = nameInput ? nameInput.value.trim() : "";
+    if (!nameVal) {
+      if (nameInput) nameInput.classList.add("invalid");
+      // Remove existing error if any
+      const existing = nameInput && nameInput.parentElement.parentElement.querySelector(".field-error");
+      if (!existing) {
+        const errDiv = document.createElement("div");
+        errDiv.className = "field-error";
+        errDiv.textContent = "Job name is required";
+        nameInput.closest(".wiz-section-name").appendChild(errDiv);
+      }
+      return;
+    } else if (nameInput) {
+      nameInput.classList.remove("invalid");
+      const errEl = nameInput.closest(".wiz-section-name").querySelector(".field-error");
+      if (errEl) errEl.remove();
+    }
+  }
   _wizSaveCurrentStep();
   if (_wizStep < 3) {
     _wizStep++;
@@ -419,7 +474,8 @@ window.wizCreateJob = async function () {
       try {
         const formData = new FormData();
         formData.append("file", window._wizPendingCSV);
-        const uploadRes = await fetch(`/api/jobs/${encodeURIComponent(newId)}/upload`, {
+        formData.append("role", "workbook");
+        const uploadRes = await fetch(`/api/jobs/${encodeURIComponent(newId)}/files`, {
           method: "POST",
           body: formData,
         });

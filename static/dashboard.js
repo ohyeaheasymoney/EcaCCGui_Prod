@@ -34,24 +34,38 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) _pollManager.stopAll();
 });
 
+var _retryCountdownTimer = null;
+
 function showConnectionBanner(lost) {
   let banner = $("connection-banner");
   if (lost) {
+    if (_retryCountdownTimer) { clearInterval(_retryCountdownTimer); _retryCountdownTimer = null; }
     if (!banner) {
       banner = document.createElement("div");
       banner.id = "connection-banner";
-      banner.className = "connection-banner connection-lost";
-      banner.innerHTML = "Connection lost &mdash; reconnecting...";
       document.body.appendChild(banner);
-    } else {
-      banner.className = "connection-banner connection-lost";
-      banner.innerHTML = "Connection lost &mdash; reconnecting...";
-      banner.style.display = "block";
     }
+    banner.className = "connection-banner connection-lost";
+    banner.style.display = "block";
+
+    let countdown = 15;
+    banner.innerHTML = 'Connection lost &mdash; retrying in <span class="retry-countdown">' + countdown + 's</span>';
+    _retryCountdownTimer = setInterval(() => {
+      countdown--;
+      const span = banner.querySelector(".retry-countdown");
+      if (span) span.textContent = countdown + "s";
+      if (countdown <= 0) {
+        clearInterval(_retryCountdownTimer);
+        _retryCountdownTimer = null;
+        banner.innerHTML = 'Connection lost &mdash; retrying now...';
+      }
+    }, 1000);
+
     // (#12) Disable panel close button during disconnect
     const closeBtn = qs(".job-panel .panel-header .modal-close");
     if (closeBtn) { closeBtn.disabled = true; closeBtn.title = "Reconnecting..."; }
   } else {
+    if (_retryCountdownTimer) { clearInterval(_retryCountdownTimer); _retryCountdownTimer = null; }
     if (banner) {
       banner.className = "connection-banner connection-ok";
       banner.innerHTML = "Reconnected";
@@ -139,7 +153,7 @@ window.showConfirm = function (message, onConfirm, options = {}) {
 
   container.innerHTML = `
     <div class="confirm-overlay" id="confirm-overlay" role="dialog" aria-modal="true">
-      <div class="confirm-card">
+      <div class="confirm-card${danger ? " danger" : ""}">
         <div class="confirm-title">${safeText(title)}</div>
         <div class="confirm-message">${options.html ? message : safeText(message)}</div>
         <div class="confirm-actions">
@@ -151,16 +165,16 @@ window.showConfirm = function (message, onConfirm, options = {}) {
   `;
 
   let dismissed = false;
+  const thisOverlay = $("confirm-overlay");
   const dismiss = () => {
     if (dismissed) return;
     dismissed = true;
-    const overlay = $("confirm-overlay");
-    if (overlay) {
-      overlay.classList.add("closing");
-      const clear = () => { container.innerHTML = ""; };
-      overlay.addEventListener("animationend", clear, { once: true });
+    if (thisOverlay && container.contains(thisOverlay)) {
+      thisOverlay.classList.add("closing");
+      const clear = () => { if (container.contains(thisOverlay)) thisOverlay.remove(); };
+      thisOverlay.addEventListener("animationend", clear, { once: true });
       setTimeout(clear, 300);
-    } else container.innerHTML = "";
+    } else if (thisOverlay) { thisOverlay.remove(); }
   };
   $("confirm-cancel").addEventListener("click", () => { dismiss(); if (onCancel) onCancel(); });
   $("confirm-overlay").addEventListener("click", (e) => { if (e.target.id === "confirm-overlay") { dismiss(); if (onCancel) onCancel(); } });
@@ -183,6 +197,11 @@ function updateNavBadges(jobs) {
   const running = jobs.filter(j => j.status === "running").length;
   if (running > 0) {
     badge.textContent = running;
+    badge.className = "nav-badge";
+    badge.style.display = "inline-flex";
+  } else if (jobs.length > 0) {
+    badge.textContent = jobs.length;
+    badge.className = "nav-badge-total";
     badge.style.display = "inline-flex";
   } else {
     badge.style.display = "none";
@@ -229,30 +248,8 @@ window.exportJobsCSV = function () {
 // ─────────────────────────────────────────────────────────────
 // Ops Banner (greeting + live status)
 // ─────────────────────────────────────────────────────────────
-// Pick one random idle quip per page load
-const _idleQuips = [
-  "All systems operational. Coffee is not.",
-  "Zero fires detected. Suspicious, but we'll take it.",
-  "Servers are vibing. No complaints.",
-  "Nothing is broken. Yet. Knock on wood.",
-  "All quiet on the data center front.",
-  "Uptime looking good. Your fantasy football, less so.",
-  "No alerts. Go touch grass.",
-  "Everything's green. Even the intern's code.",
-  "Systems nominal. Time to look busy.",
-  "All clear. The servers send their regards.",
-  "Smooth sailing. Don't jinx it.",
-  "No issues found. We checked twice.",
-  "Running like a dream. Somebody pinch us.",
-  "All systems go. Launch the snacks.",
-  "0 problems detected. That IS the problem.",
-  "Servers are happy. Treat yourself too.",
-  "Peace and quiet. The logs are boring today.",
-  "Nothing to fix. Are we even needed here?",
-  "All green across the board. Nap time?",
-  "Operational status: suspiciously perfect.",
-];
-const _idleQuip = _idleQuips[Math.floor(Math.random() * _idleQuips.length)];
+// Static idle status message
+const _idleQuip = "All systems operational";
 
 function renderOpsBanner(jobs) {
   const banner = $("ops-banner");
@@ -276,9 +273,20 @@ function renderOpsBanner(jobs) {
   statsHtml += `<span class="ops-stat">${jobs.length} total</span>`;
 
   banner.className = running > 0 ? "ops-banner ops-banner-active" : "ops-banner";
+  // Time-of-day icon: sun 6am–5pm, moon 6pm–5am (idle only; pulse dot when running)
+  const isDaytime = hour >= 6 && hour < 18;
+  const todIcon = isDaytime
+    ? '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'
+    : '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+
+  // Running → keep the pulse dot for visibility; idle → show sun/moon icon
+  const iconHtml = running > 0
+    ? '<div class="ops-pulse"></div>'
+    : `<div class="ops-tod-icon">${todIcon}</div>`;
+
   banner.innerHTML = `
     <div class="ops-banner-left">
-      <div class="ops-pulse"></div>
+      ${iconHtml}
       <div>
         <div class="ops-banner-text">${greeting}</div>
         <div class="ops-stat" style="margin-top:2px;">${statusText}</div>
@@ -307,7 +315,7 @@ function renderDashboardKPIs(jobs) {
       <div class="kpi-icon"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg></div>
       <div class="kpi-label">Active Jobs</div>
       <div class="kpi-value" style="color:#60a5fa;">${running}</div>
-      <div class="kpi-sub">${saved} ready to run</div>
+      <div class="kpi-sub">${saved} saved</div>
     </div>
     <div class="kpi-card kpi-card-clickable kpi-card-green" tabindex="0" onclick="navigateToJobs('completed')" title="View completed jobs">
       <div class="kpi-icon"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
@@ -354,6 +362,10 @@ function buildDashJobCard(job) {
   const hostCount = job.hostCount || 0;
   const createdAgo = job.createdAt ? timeAgo(job.createdAt) : "\u2014";
   const status = (job.status || "saved").toLowerCase();
+  const customer = (job.customer || "").toLowerCase();
+  const custDef = (window.CUSTOMER_DEFINITIONS || {})[customer];
+  const custLabel = custDef ? custDef.label : "";
+  const wfIcon = _wfCategoryIcon(workflow, 11);
 
   let progressHtml = "";
   if (status === "running") {
@@ -382,17 +394,23 @@ function buildDashJobCard(job) {
     </div>`;
   }
 
+  const custBadge = custLabel ? `<span class="dash-customer-badge">${safeText(custLabel)}</span>` : "";
+  const hostChip = hostCount
+    ? `<span class="dash-host-chip">${hostCount} hosts</span>`
+    : `<span class="muted" style="font-size:11px;">No hosts</span>`;
+
   return `<div class="job-row-card job-row-card-${status}" data-jobid="${safeText(jobId)}">
     <div class="job-row-content">
       <div class="job-row-top">
-        <span class="status-dot status-dot-${status}"></span>
+        <span class="status-dot status-dot-${status}" title="${status}"></span>
         <span class="job-row-name">${jobName}</span>
+        ${custBadge}
         ${statusBadge(status, job.updatedAt || job.createdAt)}
       </div>
       <div class="job-row-meta">
-        <span>${wfLabel}</span>
+        ${wfIcon}<span>${wfLabel}</span>
         <span class="meta-dot"></span>
-        <span>${hostCount ? hostCount + " hosts" : "No hosts"}</span>
+        ${hostChip}
         <span class="meta-dot"></span>
         <span>${safeText(createdAgo)}</span>
       </div>
@@ -416,7 +434,8 @@ async function pollRunningDashboard() {
     return;
   }
 
-  for (const job of running) {
+  // Fetch all running job logs in parallel instead of sequentially
+  await Promise.all(running.map(async (job) => {
     const jobId = job.jobId || job.id || job.job_id;
     try {
       const log = await apiGet(`/api/jobs/${encodeURIComponent(jobId)}/log`);
@@ -463,7 +482,7 @@ async function pollRunningDashboard() {
     } catch {
       // silent — job may have finished
     }
-  }
+  }));
 
   _pollManager.startOnce("dashProgress", pollRunningDashboard, 5000);
 }
@@ -494,7 +513,12 @@ async function loadJobs() {
     // Jobs table (full list page)
     if (jobsTable) {
       if (!Array.isArray(jobs) || jobs.length === 0) {
-        jobsTable.innerHTML = `<p class="muted">No jobs yet. Create your first job.</p>`;
+        jobsTable.innerHTML = `<div class="empty-state">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.25;margin-bottom:10px;"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+            <div style="font-size:14px;font-weight:600;margin-bottom:4px;">No jobs yet</div>
+            <div class="muted" style="margin-bottom:12px;">Create your first job to get started with automation.</div>
+            ${hasPermission("jobs_create") ? '<button class="btn primary" onclick="launchWizard()">New Job</button>' : ""}
+          </div>`;
       } else {
         const running = jobs.filter(j => j.status === "running").length;
         const completed = jobs.filter(j => j.status === "completed").length;
@@ -509,7 +533,7 @@ async function loadJobs() {
             <button class="filter-tab" data-filter="failed" onclick="setJobFilter('failed')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Failed <span class="filter-count">${failed}</span></button>
             <button class="filter-tab" data-filter="saved" onclick="setJobFilter('saved')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Ready <span class="filter-count">${saved}</span></button>
           </div>
-          <div class="jobs-toolbar">
+          <div class="jobs-toolbar jobs-toolbar-row1">
             <div style="position:relative;flex:1;max-width:300px;">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:0.4;pointer-events:none;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input type="text" id="job-search-input" class="inp" placeholder="Search by name, rack ID, workflow, or SKU..."
@@ -517,6 +541,10 @@ async function loadJobs() {
                 style="width:100%;padding-left:32px;"
                 oninput="debouncedSearchJobs(this.value)" />
             </div>
+            <div class="filter-preset-container" id="filter-preset-container"></div>
+            ${hasPermission("jobs_create") ? `<button class="btn-secondary" onclick="launchWizard()" style="margin-left:auto;white-space:nowrap;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Job</button>` : ""}
+          </div>
+          <div class="jobs-toolbar jobs-toolbar-row2">
             <select id="job-workflow-filter" class="inp filter-select" onchange="window._workflowFilter=this.value;saveFilterState();applyDateFilter()">
               <option value="all">All Workflows</option>
               ${_WORKFLOWS_STANDARD.map(w => `<option value="${w.value}">${w.label}</option>`).join("")}
@@ -527,26 +555,28 @@ async function loadJobs() {
             </select>
             <input type="date" id="job-date-from" class="inp" style="max-width:140px;font-size:12px;" title="From date" onchange="applyDateFilter()" />
             <input type="date" id="job-date-to" class="inp" style="max-width:140px;font-size:12px;" title="To date" onchange="applyDateFilter()" />
-            <div class="bulk-actions" id="bulk-actions" style="display:none;">
+            ${hasPermission("jobs_bulk") ? `<div class="bulk-actions" id="bulk-actions" style="display:none;">
               <span class="muted" id="bulk-count">0 selected</span>
-              <button class="btn ghost" onclick="bulkCloneJobs()" title="Duplicate selected jobs with the same files and settings">Clone</button>
-              <button class="btn ghost" style="color:#f87171;border-color:rgba(248,113,113,0.3);" onclick="bulkDeleteJobs()" title="Permanently delete selected jobs and all their data">Delete</button>
-            </div>
+              ${hasPermission("jobs_run") ? `<button class="btn ghost" style="color:#4ade80;border-color:rgba(74,222,128,0.3);" onclick="bulkRunJobs()" title="Run selected jobs with workflow choice">Run</button>` : ""}
+              ${hasPermission("jobs_stop") ? `<button class="btn ghost" style="color:#fbbf24;border-color:rgba(251,191,36,0.3);" onclick="bulkStopJobs()" title="Stop all selected running jobs">Stop</button>` : ""}
+              ${hasPermission("jobs_create") ? `<button class="btn ghost" onclick="bulkCloneJobs()" title="Duplicate selected jobs with the same files and settings">Clone</button>` : ""}
+              ${hasPermission("jobs_delete") ? `<button class="btn ghost" style="color:#f87171;border-color:rgba(248,113,113,0.3);" onclick="bulkDeleteJobs()" title="Permanently delete selected jobs and all their data">Delete</button>` : ""}
+            </div>` : ""}
           </div>
-          <table class="jobs-table-inner">
-            <thead>
-              <tr>
-                <th style="width:30px;"><input type="checkbox" id="bulk-select-all" onchange="toggleBulkSelectAll(this.checked)" /></th>
-                <th><span class="sortable-header${window._sortCol === 'name' ? ' sort-active' : ''}" data-sort="name" onclick="toggleJobSort('name')">Name <span class="sort-arrow">${window._sortCol === 'name' ? (window._sortDir === 'asc' ? '\u25B2' : '\u25BC') : '\u25BC'}</span></span></th>
-                <th><span class="sortable-header${window._sortCol === 'workflow' ? ' sort-active' : ''}" data-sort="workflow" onclick="toggleJobSort('workflow')">Workflow <span class="sort-arrow">${window._sortCol === 'workflow' ? (window._sortDir === 'asc' ? '\u25B2' : '\u25BC') : '\u25BC'}</span></span></th>
-                <th><span class="sortable-header${window._sortCol === 'hosts' ? ' sort-active' : ''}" data-sort="hosts" onclick="toggleJobSort('hosts')">Hosts <span class="sort-arrow">${window._sortCol === 'hosts' ? (window._sortDir === 'asc' ? '\u25B2' : '\u25BC') : '\u25BC'}</span></span></th>
-                <th>Last Run</th>
-                <th><span class="sortable-header${window._sortCol === 'created' ? ' sort-active' : ''}" data-sort="created" onclick="toggleJobSort('created')">Created <span class="sort-arrow">${window._sortCol === 'created' ? (window._sortDir === 'asc' ? '\u25B2' : '\u25BC') : '\u25BC'}</span></span></th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="job-table-body"></tbody>
-          </table>
+          <div class="jobs-sort-row">
+            <label class="muted" style="font-size:12px;margin-right:4px;">Sort:</label>
+            <select id="job-sort-select" class="inp filter-select" style="max-width:150px;font-size:12px;" onchange="window._sortCol=this.value;saveFilterState();applyDateFilter()">
+              <option value="created"${window._sortCol === 'created' ? ' selected' : ''}>Created</option>
+              <option value="name"${window._sortCol === 'name' ? ' selected' : ''}>Name</option>
+              <option value="workflow"${window._sortCol === 'workflow' ? ' selected' : ''}>Workflow</option>
+              <option value="hosts"${window._sortCol === 'hosts' ? ' selected' : ''}>Hosts</option>
+            </select>
+            <button class="btn ghost" style="padding:4px 8px;font-size:12px;" onclick="window._sortDir=window._sortDir==='asc'?'desc':'asc';saveFilterState();applyDateFilter()" title="Toggle sort direction" id="sort-dir-btn">${window._sortDir === 'asc' ? '\u25B2 Asc' : '\u25BC Desc'}</button>
+            <span style="flex:1;"></span>
+            <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;" class="muted"><input type="checkbox" id="bulk-select-all" onchange="toggleBulkSelectAll(this.checked)" style="margin:0;" /> Select all</label>
+          </div>
+          <div id="job-card-list" class="job-card-list"></div>
+          <div class="jobs-table-footer" id="jobs-table-footer"></div>
         `;
         // Restore saved filter state (Feature 6)
         const savedFilters = loadFilterState();
@@ -575,6 +605,7 @@ async function loadJobs() {
           savedFilters ? (savedFilters.text || "") : "",
           window._activeJobFilter || "all"
         );
+        _renderPresetDropdown();
       }
     }
 
@@ -586,13 +617,16 @@ async function loadJobs() {
             <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.25;margin-bottom:10px;"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
             <div style="font-size:14px;font-weight:600;margin-bottom:4px;">No jobs yet</div>
             <div class="muted" style="margin-bottom:12px;">Create your first job to get started with automation.</div>
-            <button class="btn primary" onclick="launchWizard()">New Job</button>
+            ${hasPermission("jobs_create") ? `<button class="btn primary" onclick="launchWizard()">New Job</button>` : ""}
           </div>`;
       } else {
         const DASH_LIMIT = 10;
         const hasMore = jobs.length > DASH_LIMIT;
 
-        savedList.innerHTML = jobs.map((job, i) => {
+        // New Job quick-action button at top of list
+        const newJobBtn = hasPermission("jobs_create") ? `<div class="dash-new-job-row"><button class="btn ghost dash-new-job-btn" onclick="launchWizard()"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Job</button></div>` : "";
+
+        savedList.innerHTML = newJobBtn + jobs.map((job, i) => {
           const extra = hasMore && i >= DASH_LIMIT ? ' style="display:none;"' : "";
           return `<div class="dash-job-wrapper"${extra}>${buildDashJobCard(job)}</div>`;
         }).join("");
@@ -668,48 +702,84 @@ window.applyDateFilter = function () {
   renderJobsFiltered(q, window._activeJobFilter || "all");
 };
 
-// ─── Job Row Helpers (Issue #9: DOM reconciliation) ───
-function _buildJobRowHtml(job) {
+// ─── Job Card Helpers (Issue #9: DOM reconciliation) ───
+function _buildJobCardHtml(job) {
   const jobId = job.jobId || job.id || job.job_id;
+  const jobName = safeText(job.jobName || job.name || "(unnamed)");
+  const workflow = (job.workflow || "").toLowerCase();
+  const wfLabel = safeText((window.WORKFLOW_LABELS && window.WORKFLOW_LABELS[workflow]) || workflow || "\u2014");
   const hostCount = job.hostCount || 0;
+  const createdAgo = job.createdAt ? timeAgo(job.createdAt) : "\u2014";
+  const status = (job.status || "saved").toLowerCase();
+  const customer = (job.customer || "").toLowerCase();
+  const custDef = (window.CUSTOMER_DEFINITIONS || {})[customer];
+  const custLabel = custDef ? custDef.label : "";
+  const wfIcon = _wfCategoryIcon(workflow, 11);
+
+  // Last run result badge
   const lastResult = job.lastRunResult || "";
   const lastTags = Array.isArray(job.lastRunTags) && job.lastRunTags.length ? job.lastRunTags.join(", ") : "full";
-  const workflow = (job.workflow || "").toLowerCase();
-  const wfLabel = (window.WORKFLOW_LABELS && window.WORKFLOW_LABELS[workflow]) || workflow || "\u2014";
-  const createdAgo = job.createdAt ? timeAgo(job.createdAt) : "\u2014";
-
-  let lastRunHtml = '<span class="muted">\u2014</span>';
+  let lastRunHtml = "";
   if (lastResult === "passed") {
-    lastRunHtml = `<span class="run-result run-result-passed"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="20 6 9 17 4 12"/></svg>${lastTags} \u2014 passed</span>`;
+    lastRunHtml = `<span class="run-result run-result-passed" style="font-size:11px;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:2px;"><polyline points="20 6 9 17 4 12"/></svg>${safeText(lastTags)} \u2014 passed</span>`;
   } else if (lastResult === "failed") {
-    lastRunHtml = `<span class="run-result run-result-failed"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>${lastTags} \u2014 failed</span>`;
+    lastRunHtml = `<span class="run-result run-result-failed" style="font-size:11px;"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:2px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>${safeText(lastTags)} \u2014 failed</span>`;
   } else if (job.lastRunId) {
-    lastRunHtml = `<span class="muted">${lastTags}</span>`;
+    lastRunHtml = `<span class="muted" style="font-size:11px;">${safeText(lastTags)}</span>`;
   }
+
+  // Progress bar for running jobs
+  let progressHtml = "";
+  if (status === "running") {
+    const prog = window._dashProgress[jobId];
+    const pct = prog && prog.pct > 0 ? prog.pct : 0;
+    const taskName = prog && prog.lastTask ? prog.lastTask : "";
+    const elapsed = prog && prog.elapsed ? prog.elapsed : "";
+    const fillClass = pct > 0 ? "" : " inline-progress-indeterminate";
+    const taskDisplay = (elapsed ? elapsed + " \u2014 " : "") + safeText(taskName || (pct > 0 ? pct + "%" : "Running..."));
+    progressHtml = `<div class="job-row-progress" id="jobs-prog-${safeText(jobId)}">
+      <div class="inline-progress"><div class="inline-progress-fill${fillClass}" style="width:${pct}%"></div></div>
+      <div class="dash-task-name">${taskDisplay}</div>
+    </div>`;
+  }
+
+  const custBadge = custLabel ? `<span class="dash-customer-badge">${safeText(custLabel)}</span>` : "";
+  const hostChip = hostCount
+    ? `<span class="dash-host-chip">${hostCount} hosts</span>`
+    : `<span class="muted" style="font-size:11px;">No hosts</span>`;
 
   return {
     jobId,
-    cells: `
-      <td><input type="checkbox" class="bulk-cb" data-jobid="${safeText(jobId)}" onchange="updateBulkCount()" /></td>
-      <td>${safeText(job.jobName || job.name)} ${statusBadge(job.status)}</td>
-      <td>${safeText(wfLabel)}</td>
-      <td>${hostCount ? hostCount + " hosts" : '<span class="muted">\u2014</span>'}</td>
-      <td>${lastRunHtml}</td>
-      <td class="muted">${safeText(createdAgo)}</td>
-      <td>
-        <button class="btn ghost" data-jobid="${safeText(jobId)}">View</button>
-      </td>
-    `,
+    html: `<div class="job-card-item" data-jobid="${safeText(jobId)}">
+      <input type="checkbox" class="bulk-cb job-card-cb" data-jobid="${safeText(jobId)}" onchange="updateBulkCount()" />
+      <div class="job-row-card job-row-card-${status}">
+        <div class="job-row-content">
+          <div class="job-row-top">
+            <span class="status-dot status-dot-${status}" title="${status}"></span>
+            <span class="job-row-name">${jobName}</span>
+            ${custBadge}
+            ${statusBadge(status, job.updatedAt || job.createdAt)}
+          </div>
+          <div class="job-row-meta">
+            ${wfIcon}<span>${wfLabel}</span>
+            <span class="meta-dot"></span>
+            ${hostChip}
+            <span class="meta-dot"></span>
+            <span>${safeText(createdAgo)}</span>
+            ${lastRunHtml ? `<span class="meta-dot"></span>${lastRunHtml}` : ""}
+          </div>
+          ${progressHtml}
+        </div>
+        <div class="job-row-actions">
+          <button class="btn ghost" data-jobid="${safeText(jobId)}">View</button>
+        </div>
+      </div>
+    </div>`,
   };
 }
 
-function _createJobRow(job) {
-  const { jobId, cells } = _buildJobRowHtml(job);
-  const tr = document.createElement("tr");
-  tr.setAttribute("data-jobid", jobId);
-  tr.innerHTML = cells;
-  // Wire view button
-  const btn = tr.querySelector('button[data-jobid]');
+function _wireJobCard(el) {
+  const btn = el.querySelector('button[data-jobid]');
   if (btn) {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -717,47 +787,65 @@ function _createJobRow(job) {
       openJobPanel(btn.getAttribute("data-jobid"));
     });
   }
-  return tr;
-}
-
-function _updateJobRow(tr, job) {
-  const { cells } = _buildJobRowHtml(job);
-  tr.innerHTML = cells;
-  // Re-wire view button
-  const btn = tr.querySelector('button[data-jobid]');
-  if (btn) {
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openJobPanel(btn.getAttribute("data-jobid"));
+  // Click on card (not checkbox) opens panel
+  const card = el.querySelector('.job-row-card');
+  if (card) {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest('button') || e.target.closest('input')) return;
+      const jid = el.dataset.jobid;
+      if (jid) openJobPanel(jid);
     });
   }
 }
 
-function reconcileJobTable(tbody, filtered) {
+function _createJobCard(job) {
+  const { jobId, html } = _buildJobCardHtml(job);
+  const wrap = document.createElement("div");
+  wrap.innerHTML = html;
+  const el = wrap.firstElementChild;
+  _wireJobCard(el);
+  return el;
+}
+
+function _updateJobCard(el, job) {
+  const { html } = _buildJobCardHtml(job);
+  const wrap = document.createElement("div");
+  wrap.innerHTML = html;
+  const newEl = wrap.firstElementChild;
+  // Preserve checkbox state
+  const oldCb = el.querySelector('.bulk-cb');
+  const wasChecked = oldCb && oldCb.checked;
+  el.innerHTML = newEl.innerHTML;
+  el.className = newEl.className;
+  // Restore data-jobid on outer element
+  el.setAttribute("data-jobid", newEl.dataset.jobid);
+  const newCb = el.querySelector('.bulk-cb');
+  if (newCb && wasChecked) newCb.checked = true;
+  _wireJobCard(el);
+}
+
+function reconcileJobCards(container, filtered) {
   const existing = new Map();
-  tbody.querySelectorAll("tr[data-jobid]").forEach(tr => existing.set(tr.dataset.jobid, tr));
+  container.querySelectorAll(".job-card-item[data-jobid]").forEach(el => existing.set(el.dataset.jobid, el));
   const seen = new Set();
-  let insertBefore = null;  // for ordering: append in order by removing and re-inserting
-  filtered.forEach((job, idx) => {
+  filtered.forEach((job) => {
     const id = job.jobId || job.id || job.job_id;
     seen.add(id);
     if (existing.has(id)) {
-      const tr = existing.get(id);
-      _updateJobRow(tr, job);
-      // Ensure correct order
-      tbody.appendChild(tr);
+      const el = existing.get(id);
+      _updateJobCard(el, job);
+      container.appendChild(el);
     } else {
-      tbody.appendChild(_createJobRow(job));
+      container.appendChild(_createJobCard(job));
     }
   });
-  // Remove stale rows
-  existing.forEach((tr, id) => { if (!seen.has(id)) tr.remove(); });
+  existing.forEach((el, id) => { if (!seen.has(id)) el.remove(); });
 }
 
 window.renderJobsFiltered = function (textFilter, statusFilter) {
-  const tbody = $("job-table-body");
-  if (!tbody) return;
+  const cardList = $("job-card-list");
+  if (!cardList) return;
+  const tbody = cardList; // alias for compatibility
   const jobs = window._allJobs || [];
   const q = (textFilter || "").toLowerCase().trim();
   const sf = (statusFilter || "all").toLowerCase();
@@ -815,8 +903,19 @@ window.renderJobsFiltered = function (textFilter, statusFilter) {
     return sortJobs(a, b, window._sortCol, window._sortDir);
   });
 
-  // DOM reconciliation: update existing rows, add new, remove stale
-  reconcileJobTable(tbody, filtered);
+  // DOM reconciliation: update existing cards, add new, remove stale
+  reconcileJobCards(tbody, filtered);
+
+  // Update "Showing X of Y" footer
+  const footer = $("jobs-table-footer");
+  if (footer) {
+    const total = jobs.length;
+    if (filtered.length < total) {
+      footer.innerHTML = `<span class="muted" style="font-size:12px;">Showing ${filtered.length} of ${total} jobs</span>`;
+    } else {
+      footer.innerHTML = `<span class="muted" style="font-size:12px;">${total} job${total !== 1 ? "s" : ""} total</span>`;
+    }
+  }
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -903,6 +1002,171 @@ window.bulkCloneJobs = async function () {
 };
 
 // ─────────────────────────────────────────────────────────────
+// Workflow Category Icons (shared across dashboard + jobs table)
+// ─────────────────────────────────────────────────────────────
+function _wfCategoryIcon(workflow, size) {
+  size = size || 12;
+  const wf = (workflow || "").toLowerCase();
+  const cat = _WORKFLOWS_STANDARD.find(w => w.value === wf);
+  const category = cat ? cat.category : "";
+  if (category === "Server") {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;opacity:0.5;flex-shrink:0;"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>`;
+  } else if (category === "Network") {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;opacity:0.5;flex-shrink:0;"><rect x="1" y="6" width="22" height="12" rx="2"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/></svg>`;
+  } else if (category === "Power") {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;opacity:0.5;flex-shrink:0;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`;
+  }
+  // Default gear icon for unknown categories
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;opacity:0.35;flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Bulk Run / Bulk Stop
+// ─────────────────────────────────────────────────────────────
+window.bulkRunJobs = async function () {
+  const selected = qsa(".bulk-cb:checked");
+  if (!selected.length) return;
+  const jobs = window._allJobs || [];
+  const ids = [...selected].map(cb => cb.dataset.jobid);
+  const eligible = ids.filter(id => {
+    const j = jobs.find(j => (j.jobId || j.id || j.job_id) === id);
+    return j && j.status !== "running";
+  });
+  const skipped = ids.length - eligible.length;
+
+  if (!eligible.length) {
+    showToast("All selected jobs are already running", "info");
+    return;
+  }
+
+  const names = eligible.map(id => {
+    const j = jobs.find(j => (j.jobId || j.id || j.job_id) === id);
+    return safeText(j ? (j.jobName || j.name || id) : id);
+  });
+
+  // Build custom modal with workflow selector
+  const container = $("confirm-modal-container");
+  if (!container) return;
+
+  const listHtml = names.map(n => `<div style="padding:2px 0;">&bull; ${n}</div>`).join("");
+  const skipMsg = skipped > 0 ? `<p class="muted" style="margin-top:8px;">${skipped} already-running job(s) will be skipped.</p>` : "";
+
+  // Build workflow options from _WORKFLOWS_STANDARD
+  const wfCategories = {};
+  _WORKFLOWS_STANDARD.forEach(w => {
+    const cat = w.category || "Other";
+    if (!wfCategories[cat]) wfCategories[cat] = [];
+    wfCategories[cat].push(w);
+  });
+  let wfOptionsHtml = '<option value="">Each job\'s own workflow</option>';
+  Object.entries(wfCategories).forEach(([cat, items]) => {
+    wfOptionsHtml += `<optgroup label="${cat}">`;
+    items.forEach(w => { wfOptionsHtml += `<option value="${w.value}">${w.label}</option>`; });
+    wfOptionsHtml += '</optgroup>';
+  });
+
+  container.innerHTML = `
+    <div class="confirm-overlay" id="bulk-run-overlay" role="dialog" aria-modal="true">
+      <div class="confirm-card" style="max-width:440px;">
+        <div class="confirm-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>Bulk Run
+        </div>
+        <div style="margin:10px 0 12px;">
+          <label class="muted" style="font-size:11px;display:block;margin-bottom:4px;">Workflow Override</label>
+          <select class="inp" id="bulk-run-wf-select" style="width:100%;">
+            ${wfOptionsHtml}
+          </select>
+          <p class="muted" style="font-size:10px;margin-top:4px;line-height:1.4;">Choose a workflow to run on all selected jobs, or leave default to use each job's assigned workflow.</p>
+        </div>
+        <div class="confirm-message" style="max-height:200px;overflow-y:auto;">
+          <p>Run <strong>${eligible.length}</strong> job(s):</p>
+          ${listHtml}
+          ${skipMsg}
+        </div>
+        <div class="confirm-actions">
+          <button class="btn ghost" id="bulk-run-cancel">Cancel</button>
+          <button class="btn primary" id="bulk-run-ok">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run All
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Modal result promise
+  const result = await new Promise((resolve) => {
+    let dismissed = false;
+    const dismiss = (val) => {
+      if (dismissed) return;
+      dismissed = true;
+      const overlay = $("bulk-run-overlay");
+      if (overlay) {
+        overlay.classList.add("closing");
+        const clear = () => { container.innerHTML = ""; };
+        overlay.addEventListener("animationend", clear, { once: true });
+        setTimeout(clear, 300);
+      } else container.innerHTML = "";
+      resolve(val);
+    };
+    $("bulk-run-cancel").addEventListener("click", () => dismiss(null));
+    $("bulk-run-overlay").addEventListener("click", (e) => { if (e.target.id === "bulk-run-overlay") dismiss(null); });
+    $("bulk-run-ok").addEventListener("click", () => {
+      const wfSel = $("bulk-run-wf-select");
+      dismiss({ workflow: wfSel ? wfSel.value : "" });
+    });
+  });
+
+  if (!result) return;
+
+  let started = 0, failed = 0;
+  for (const id of eligible) {
+    try {
+      const payload = { tags: [] };
+      if (result.workflow) payload.workflowOverride = result.workflow;
+      await apiPostJSON(`/api/jobs/${encodeURIComponent(id)}/run`, payload);
+      started++;
+    } catch { failed++; }
+  }
+  const wfLabel = result.workflow
+    ? ((window.WORKFLOW_LABELS && window.WORKFLOW_LABELS[result.workflow]) || result.workflow)
+    : "own workflow";
+  showToast(`${started} job(s) started with ${wfLabel}${failed ? `, ${failed} failed` : ""}`, started ? "success" : "error");
+  loadJobs();
+};
+
+window.bulkStopJobs = async function () {
+  const selected = qsa(".bulk-cb:checked");
+  if (!selected.length) return;
+  const jobs = window._allJobs || [];
+  const ids = [...selected].map(cb => cb.dataset.jobid);
+  const running = ids.filter(id => {
+    const j = jobs.find(j => (j.jobId || j.id || j.job_id) === id);
+    return j && j.status === "running";
+  });
+
+  if (!running.length) {
+    showToast("No selected jobs are currently running", "info");
+    return;
+  }
+
+  const ok = await showConfirmAsync(
+    `Stop <strong>${running.length}</strong> running job(s)? This will abort their current playbook execution.`,
+    { title: "Bulk Stop", confirmText: "Stop All", danger: true, html: true }
+  );
+  if (!ok) return;
+
+  let stopped = 0;
+  for (const id of running) {
+    try {
+      await apiPostJSON(`/api/jobs/${encodeURIComponent(id)}/stop`, {});
+      stopped++;
+    } catch { /* skip */ }
+  }
+  showToast(`${stopped} job(s) stopped`, "success");
+  loadJobs();
+};
+
+// ─────────────────────────────────────────────────────────────
 // Sortable column headers (Feature 3)
 // ─────────────────────────────────────────────────────────────
 function sortJobs(a, b, col, dir) {
@@ -942,3 +1206,302 @@ window.toggleJobSort = function (col) {
   saveFilterState();
   renderJobsFiltered(q, window._activeJobFilter || "all");
 };
+
+// ─────────────────────────────────────────────────────────────
+// Filter Presets — save & recall filter combos (max 5)
+//
+// A "preset" captures the current state of ALL filter controls:
+//   - Status tab (All / Running / Completed / Failed / Ready)
+//   - Search text
+//   - Workflow dropdown
+//   - Customer dropdown
+//   - Date range (from / to)
+//
+// Presets are stored in localStorage under key "eca_filter_presets".
+// The active preset name is tracked so the user can see which one
+// is applied, and a "Clear Filters" button resets everything.
+// ─────────────────────────────────────────────────────────────
+
+// Currently loaded preset name (null = no preset active)
+window._activePresetName = null;
+
+function _getFilterPresets() {
+  try {
+    return JSON.parse(localStorage.getItem("eca_filter_presets") || "[]");
+  } catch { return []; }
+}
+
+function _saveFilterPresets(presets) {
+  try { localStorage.setItem("eca_filter_presets", JSON.stringify(presets)); } catch { /* full */ }
+}
+
+// Snapshot every filter control into a plain object
+function _captureCurrentFilters() {
+  const searchInput = $("job-search-input");
+  const dateFrom = $("job-date-from");
+  const dateTo = $("job-date-to");
+  return {
+    status: window._activeJobFilter || "all",
+    text: searchInput ? searchInput.value : "",
+    workflow: window._workflowFilter || "all",
+    customer: window._customerFilter || "all",
+    dateFrom: dateFrom ? dateFrom.value : "",
+    dateTo: dateTo ? dateTo.value : "",
+  };
+}
+
+// Build a short human-readable summary of what a preset filters
+// e.g. "Running | configbuild | search: rack-12"
+function _presetSummary(filters) {
+  const parts = [];
+  if (filters.status && filters.status !== "all") parts.push(filters.status);
+  if (filters.workflow && filters.workflow !== "all") {
+    const label = (window.WORKFLOW_LABELS && window.WORKFLOW_LABELS[filters.workflow]) || filters.workflow;
+    parts.push(label);
+  }
+  if (filters.customer && filters.customer !== "all") parts.push(filters.customer);
+  if (filters.text) parts.push("\"" + filters.text + "\"");
+  if (filters.dateFrom || filters.dateTo) {
+    parts.push((filters.dateFrom || "...") + " \u2192 " + (filters.dateTo || "..."));
+  }
+  return parts.length ? parts.join(" \u2022 ") : "No filters";
+}
+
+// ── Save: uses a styled inline form instead of browser prompt() ──
+window.saveFilterPreset = function () {
+  const presets = _getFilterPresets();
+  if (presets.length >= 5) {
+    showToast("Maximum 5 presets reached. Delete one first to make room.", "info", 4000);
+    return;
+  }
+
+  // Show a styled modal for naming (matches app confirm-card style)
+  const container = $("confirm-modal-container");
+  if (!container) return;
+
+  const currentSummary = _presetSummary(_captureCurrentFilters());
+
+  container.innerHTML = `
+    <div class="confirm-overlay" id="preset-save-overlay" role="dialog" aria-modal="true">
+      <div class="confirm-card" style="max-width:380px;">
+        <div class="confirm-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save Filter Preset
+        </div>
+        <p class="muted" style="margin:8px 0 4px;font-size:11px;">Save your current filter combination so you can quickly switch back to it later. You can save up to 5 presets.</p>
+        <div style="margin:10px 0;">
+          <label class="muted" style="font-size:11px;display:block;margin-bottom:4px;">Preset Name</label>
+          <input class="inp" id="preset-save-name" placeholder="e.g. Running ConfigBuild, Failed PostProv" style="width:100%;" maxlength="40" autofocus />
+        </div>
+        <div style="margin:6px 0 12px;padding:8px 10px;border-radius:8px;background:var(--toggle-bg);border:1px solid var(--card-border);">
+          <div class="muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Filters being saved</div>
+          <div style="font-size:12px;color:var(--text-primary);">${currentSummary}</div>
+        </div>
+        <div class="confirm-actions">
+          <button class="btn ghost" id="preset-save-cancel">Cancel</button>
+          <button class="btn primary" id="preset-save-ok">Save Preset</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Focus the name input
+  setTimeout(() => { const inp = $("preset-save-name"); if (inp) inp.focus(); }, 50);
+
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    const overlay = $("preset-save-overlay");
+    if (overlay) {
+      overlay.classList.add("closing");
+      const clear = () => { container.innerHTML = ""; };
+      overlay.addEventListener("animationend", clear, { once: true });
+      setTimeout(clear, 300);
+    } else container.innerHTML = "";
+  };
+
+  $("preset-save-cancel").addEventListener("click", dismiss);
+  $("preset-save-overlay").addEventListener("click", (e) => { if (e.target.id === "preset-save-overlay") dismiss(); });
+
+  // Allow Enter key to submit
+  $("preset-save-name").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("preset-save-ok").click(); }
+  });
+
+  $("preset-save-ok").addEventListener("click", () => {
+    const name = ($("preset-save-name")?.value || "").trim();
+    if (!name) {
+      showToast("Please enter a name for your preset", "error");
+      return;
+    }
+    // Check for duplicate name
+    const existing = _getFilterPresets();
+    if (existing.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+      showToast("A preset with that name already exists", "error");
+      return;
+    }
+    dismiss();
+    existing.push({ name, filters: _captureCurrentFilters() });
+    _saveFilterPresets(existing);
+    window._activePresetName = name;
+    _renderPresetDropdown();
+    showToast("Preset \"" + name + "\" saved", "success");
+  });
+};
+
+// ── Load: apply a preset's filters to all controls ──
+window.loadFilterPreset = function (idx) {
+  const presets = _getFilterPresets();
+  const p = presets[idx];
+  if (!p) return;
+  const f = p.filters;
+
+  // Restore every filter control
+  window._activeJobFilter = f.status || "all";
+  window._workflowFilter = f.workflow || "all";
+  window._customerFilter = f.customer || "all";
+
+  const searchInput = $("job-search-input");
+  if (searchInput) searchInput.value = f.text || "";
+  const dateFrom = $("job-date-from");
+  if (dateFrom) dateFrom.value = f.dateFrom || "";
+  const dateTo = $("job-date-to");
+  if (dateTo) dateTo.value = f.dateTo || "";
+  const wfSelect = $("job-workflow-filter");
+  if (wfSelect) wfSelect.value = f.workflow || "all";
+  const custSelect = $("job-customer-filter");
+  if (custSelect) custSelect.value = f.customer || "all";
+
+  qsa(".filter-tab").forEach(t => t.classList.toggle("active", t.dataset.filter === window._activeJobFilter));
+  window._activePresetName = p.name;
+  saveFilterState();
+  renderJobsFiltered(f.text || "", window._activeJobFilter);
+  _renderPresetDropdown();
+  showToast("Loaded preset \"" + safeText(p.name) + "\"", "success", 1500);
+};
+
+// ── Clear: reset ALL filters back to defaults ──
+window.clearAllFilters = function () {
+  window._activeJobFilter = "all";
+  window._workflowFilter = "all";
+  window._customerFilter = "all";
+  window._activePresetName = null;
+
+  const searchInput = $("job-search-input");
+  if (searchInput) searchInput.value = "";
+  const dateFrom = $("job-date-from");
+  if (dateFrom) dateFrom.value = "";
+  const dateTo = $("job-date-to");
+  if (dateTo) dateTo.value = "";
+  const wfSelect = $("job-workflow-filter");
+  if (wfSelect) wfSelect.value = "all";
+  const custSelect = $("job-customer-filter");
+  if (custSelect) custSelect.value = "all";
+
+  qsa(".filter-tab").forEach(t => t.classList.toggle("active", t.dataset.filter === "all"));
+  saveFilterState();
+  renderJobsFiltered("", "all");
+  _renderPresetDropdown();
+  showToast("All filters cleared", "info", 1500);
+};
+
+// ── Delete: remove a preset with confirmation ──
+window.deleteFilterPreset = function (idx) {
+  const presets = _getFilterPresets();
+  const p = presets[idx];
+  if (!p) return;
+
+  // If deleting the active preset, deactivate it
+  if (window._activePresetName === p.name) {
+    window._activePresetName = null;
+  }
+  presets.splice(idx, 1);
+  _saveFilterPresets(presets);
+  _renderPresetDropdown();
+  showToast("Preset \"" + safeText(p.name) + "\" deleted", "info", 1500);
+};
+
+// ── Render the full preset toolbar UI ──
+function _renderPresetDropdown() {
+  const container = $("filter-preset-container");
+  if (!container) return;
+  const presets = _getFilterPresets();
+  const hasActive = !!window._activePresetName;
+
+  // Save icon SVG
+  const saveSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
+  // Chevron SVG
+  const chevSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M6 9l6 6 6-6"/></svg>';
+  // Bookmark SVG
+  const bookSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
+
+  let html = '<div class="preset-group">';
+
+  // Active preset indicator badge (shows which preset is loaded)
+  if (hasActive) {
+    html += '<span class="preset-active-badge" title="Active filter preset">' + bookSvg + safeText(window._activePresetName) + '</span>';
+    html += '<button class="btn ghost btn-sm preset-clear-btn" onclick="clearAllFilters()" title="Clear all filters and remove active preset">Clear</button>';
+  }
+
+  // Save button
+  html += '<button class="btn ghost btn-sm" onclick="saveFilterPreset()" title="Save current filters as a reusable preset (max 5)">' + saveSvg + 'Save</button>';
+
+  // Presets dropdown (only if presets exist)
+  if (presets.length > 0) {
+    html += '<div class="preset-dropdown-wrap">';
+    html += '<button class="btn ghost btn-sm preset-dropdown-toggle" id="preset-dropdown-btn" onclick="_togglePresetDropdown()">' + chevSvg + 'Presets <span class="filter-count">' + presets.length + '</span></button>';
+    html += '<div class="preset-dropdown" id="preset-dropdown" style="display:none;">';
+
+    // Dropdown header with help text
+    html += '<div class="preset-dropdown-header">';
+    html += '<span class="preset-dropdown-title">' + bookSvg + 'Saved Presets</span>';
+    html += '<span class="muted" style="font-size:10px;">' + presets.length + ' of 5</span>';
+    html += '</div>';
+    html += '<p class="preset-dropdown-help">Click a preset to apply its filters. Use the trash icon to remove it.</p>';
+
+    presets.forEach((p, i) => {
+      const isActive = window._activePresetName === p.name;
+      const summary = _presetSummary(p.filters);
+      html += '<div class="preset-item' + (isActive ? ' preset-item-active' : '') + '">';
+      html += '<button class="preset-item-name" onclick="loadFilterPreset(' + i + ');_togglePresetDropdown()" title="Click to apply: ' + safeText(summary) + '">';
+      if (isActive) html += '<span class="preset-active-dot"></span>';
+      html += '<span class="preset-item-label">' + safeText(p.name) + '</span>';
+      html += '<span class="preset-item-summary">' + safeText(summary) + '</span>';
+      html += '</button>';
+      html += '<button class="preset-item-delete" onclick="event.stopPropagation();deleteFilterPreset(' + i + ')" title="Delete preset \'' + safeText(p.name) + '\'">';
+      html += '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+      html += '</button>';
+      html += '</div>';
+    });
+
+    // Footer: Clear All Presets link
+    html += '<div class="preset-dropdown-footer">';
+    html += '<button class="preset-clear-all" onclick="clearAllPresets();_togglePresetDropdown()">Delete all presets</button>';
+    html += '</div>';
+
+    html += '</div></div>';
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+window._togglePresetDropdown = function () {
+  const dd = $("preset-dropdown");
+  if (dd) dd.style.display = dd.style.display === "none" ? "block" : "none";
+};
+
+// Delete ALL saved presets
+window.clearAllPresets = function () {
+  _saveFilterPresets([]);
+  window._activePresetName = null;
+  _renderPresetDropdown();
+  showToast("All presets deleted", "info", 1500);
+};
+
+// Close preset dropdown on outside click
+document.addEventListener("click", (e) => {
+  const dd = $("preset-dropdown");
+  if (dd && dd.style.display !== "none" && !e.target.closest(".preset-dropdown-wrap")) {
+    dd.style.display = "none";
+  }
+});
