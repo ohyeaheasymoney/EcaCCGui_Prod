@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>ECA Command Center</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260305a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260305c" />
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
 </head>
 <body>
@@ -50,6 +50,20 @@
     <div class="sidebar-system-info" id="sidebar-system-info">
       <div class="sidebar-clock" id="sidebar-clock">--:--</div>
       <div class="sidebar-date" id="sidebar-date"></div>
+    </div>
+
+    <div class="sidebar-user" id="sidebar-user" style="display:none;">
+      <div class="sidebar-user-clickable" onclick="openProfilePanel()" title="Open profile settings">
+        <div class="sidebar-avatar" id="sidebar-avatar">?</div>
+        <div class="sidebar-user-info">
+          <span class="sidebar-user-name" id="sidebar-user-name"></span>
+          <span class="sidebar-user-badge" id="sidebar-user-badge"></span>
+          <span class="sidebar-user-role" id="sidebar-user-role"></span>
+        </div>
+      </div>
+      <button class="sidebar-logout-btn" onclick="doLogout()" title="Sign out">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
     </div>
 
     <div class="sidebar-footer">
@@ -340,7 +354,7 @@
       </svg>
     </div>
     <h2 class="login-title">Change Your Password</h2>
-    <p class="login-subtitle">You must set a new password before continuing.</p>
+    <p class="login-subtitle" id="pw-change-subtitle">You must set a new password before continuing.</p>
     <form id="pw-change-form" onsubmit="return false;">
       <div class="login-field">
         <label for="pw-current">Current Password</label>
@@ -355,7 +369,10 @@
         <input type="password" id="pw-confirm" class="inp" placeholder="Confirm new password" autocomplete="new-password" />
       </div>
       <div id="pw-change-error" class="login-error" style="display:none;"></div>
-      <button type="submit" class="btn primary login-btn" id="pw-change-submit">Update Password</button>
+      <div class="pw-change-buttons">
+        <button type="submit" class="btn primary login-btn" id="pw-change-submit">Update Password</button>
+        <button type="button" class="btn ghost login-btn" id="pw-change-cancel" style="display:none;" onclick="cancelPasswordChange()">Cancel</button>
+      </div>
     </form>
   </div>
 </div>
@@ -369,25 +386,27 @@
 <!-- Toast container -->
 <div id="toast-container" class="toast-container" aria-live="polite" role="status"></div>
 
-<!-- Scripts -->
-<script src="/static/utils.js?v=20260224a"></script>
-<script src="/static/api.js?v=20260224a"></script>
-<script src="/static/theme.js?v=20260224a"></script>
-<script src="/static/workflow-logic.js?v=20260224a"></script>
-<script src="/static/dashboard.js?v=20260224a"></script>
-<script src="/static/wizard-modal.js?v=20260224a"></script>
-<script src="/static/job-panel-customer.js?v=20260224a"></script>
-<script src="/static/job-panel-files.js?v=20260224a"></script>
-<script src="/static/job-panel-inventory.js?v=20260224a"></script>
-<script src="/static/job-panel-tasks.js?v=20260224a"></script>
-<script src="/static/job-panel-groups.js?v=20260224a"></script>
-<script src="/static/job-panel-execution.js?v=20260224a"></script>
-<script src="/static/job-panel-status.js?v=20260224a"></script>
-<script src="/static/job-panel-history.js?v=20260224a"></script>
-<script src="/static/job-panel-tsr.js?v=20260224a"></script>
-<script src="/static/job-panel-core.js?v=20260224a"></script>
-<script src="/static/admin.js?v=20260224a"></script>
-<script src="/static/wizard.js?v=20260224a"></script>
+<!-- Scripts (defer preserves execution order while unblocking HTML parsing) -->
+<script defer src="/static/utils.js?v=20260304g"></script>
+<script defer src="/static/api.js?v=20260304g"></script>
+<script defer src="/static/theme.js?v=20260304g"></script>
+<script defer src="/static/ui-config.js?v=20260304g"></script>
+<script defer src="/static/workflow-logic.js?v=20260304g"></script>
+<script defer src="/static/dashboard.js?v=20260304g"></script>
+<script defer src="/static/wizard-modal.js?v=20260304g"></script>
+<script defer src="/static/job-panel-customer.js?v=20260304g"></script>
+<script defer src="/static/job-panel-files.js?v=20260304g"></script>
+<script defer src="/static/job-panel-inventory.js?v=20260304g"></script>
+<script defer src="/static/job-panel-tasks.js?v=20260304g"></script>
+<script defer src="/static/job-panel-groups.js?v=20260304g"></script>
+<script defer src="/static/job-panel-execution.js?v=20260304g"></script>
+<script defer src="/static/job-panel-status.js?v=20260304g"></script>
+<script defer src="/static/job-panel-history.js?v=20260304g"></script>
+<script defer src="/static/job-panel-tsr.js?v=20260304g"></script>
+<script defer src="/static/job-panel-qc.js?v=20260305d"></script>
+<script defer src="/static/job-panel-core.js?v=20260305e"></script>
+<script defer src="/static/admin.js?v=20260305b"></script>
+<script defer src="/static/wizard.js?v=20260304g"></script>
 
 </body>
 </html>

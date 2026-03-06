@@ -71,7 +71,13 @@ window._toggleSort = function (tab, col) {
 // Tab switching
 // ─────────────────────────────────────────────────────────────
 window.switchAdminTab = function (tab) {
-  qsa(".admin-tab").forEach(t => t.classList.toggle("active", t.dataset.adminTab === tab));
+  // Gate admin tabs by permission
+  var tabPermMap = { users: "admin_users", customers: "admin_customers", workflows: "admin_workflows", audit: "admin_audit" };
+  qsa(".admin-tab").forEach(function (t) {
+    var perm = tabPermMap[t.dataset.adminTab];
+    t.style.display = (!perm || hasPermission(perm)) ? "" : "none";
+    t.classList.toggle("active", t.dataset.adminTab === tab);
+  });
   qsa(".admin-panel").forEach(p => p.classList.toggle("active", p.id === "admin-panel-" + tab));
   loadAdminStats();
   if (tab === "audit") {
@@ -89,16 +95,346 @@ window.switchAdminTab = function (tab) {
 };
 
 // ─────────────────────────────────────────────────────────────
+// Avatar color presets
+// ─────────────────────────────────────────────────────────────
+var AVATAR_COLORS = {
+  blue:   ["#3b82f6", "#6366f1"],
+  purple: ["#8b5cf6", "#a855f7"],
+  green:  ["#10b981", "#059669"],
+  teal:   ["#14b8a6", "#0891b2"],
+  orange: ["#f59e0b", "#ea580c"],
+  pink:   ["#ec4899", "#db2777"],
+  red:    ["#ef4444", "#dc2626"],
+  slate:  ["#64748b", "#475569"],
+};
+
+function _avatarGradient(color) {
+  var c = AVATAR_COLORS[color] || AVATAR_COLORS.blue;
+  return "linear-gradient(135deg, " + c[0] + ", " + c[1] + ")";
+}
+
+// ─────────────────────────────────────────────────────────────
 // initAdminNav
 // ─────────────────────────────────────────────────────────────
-window.initAdminNav = function (role, username) {
+var AVATAR_EMOJIS = [
+  "\u{1F600}", "\u{1F60E}", "\u{1F680}", "\u{1F525}", "\u{2B50}", "\u{1F4BB}",
+  "\u{1F527}", "\u{1F6E1}\uFE0F", "\u{26A1}", "\u{1F3AF}", "\u{1F916}", "\u{1F47E}",
+  "\u{1F431}", "\u{1F43B}", "\u{1F985}", "\u{1F40A}", "\u{1F422}", "\u{1F427}",
+  "\u{1F33F}", "\u{1F335}", "\u{1F30D}", "\u{1F308}", "\u{2744}\uFE0F", "\u{1F30A}",
+];
+
+window.hasPermission = function (perm) {
+  if (window._userRole === "admin") return true;
+  return !!(window._userPerms && window._userPerms[perm]);
+};
+
+window.initAdminNav = function (role, username, profileData) {
   window._userRole = role;
   window._userName = username || "";
+  var pd = profileData || {};
+  window._userFullName = pd.fullName || "";
+  window._userAvatarColor = pd.avatarColor || "blue";
+  window._userAvatarEmoji = pd.avatarEmoji || "";
+  window._userBadgeNumber = pd.badgeNumber || "";
+  window._userAvatarOutline = pd.avatarOutline || "";
+  window._userPerms = pd.permissions || {};
   const navBtn = $("nav-admin");
-  if (navBtn) navBtn.style.display = (role === "admin") ? "" : "none";
+  if (navBtn) {
+    var showAdmin = (role === "admin") || hasPermission("admin_users") || hasPermission("admin_customers") || hasPermission("admin_workflows") || hasPermission("admin_audit");
+    navBtn.style.display = showAdmin ? "" : "none";
+  }
   const indicator = $("admin-user-indicator");
   if (indicator && username) {
     indicator.innerHTML = `Logged in as <strong>${safeText(username)}</strong> (${safeText(role)})`;
+  }
+  // Apply sidebar immediately if we have profile data, otherwise fetch it
+  if (pd.fullName !== undefined || pd.avatarColor !== undefined) {
+    _applySidebarAvatar();
+  } else {
+    _loadUserProfile();
+  }
+};
+
+async function _loadUserProfile() {
+  try {
+    var res = await fetch("/api/me");
+    if (!res.ok) return;
+    var data = await res.json();
+    window._userFullName = data.fullName || "";
+    window._userAvatarColor = data.avatarColor || "blue";
+    window._userAvatarEmoji = data.avatarEmoji || "";
+    window._userBadgeNumber = data.badgeNumber || "";
+    window._userAvatarOutline = data.avatarOutline || "";
+    if (data.permissions) window._userPerms = data.permissions;
+    _applySidebarAvatar();
+  } catch { /* silent */ }
+}
+
+function _applySidebarAvatar() {
+  var username = window._userName || "";
+  var role = window._userRole || "user";
+  var displayName = window._userFullName || username;
+  var badge = window._userBadgeNumber || "";
+  var color = window._userAvatarColor || "blue";
+  var emoji = window._userAvatarEmoji || "";
+  var outline = window._userAvatarOutline || "";
+
+  var sidebarUser = $("sidebar-user");
+  if (sidebarUser && username) {
+    sidebarUser.style.display = "flex";
+    var avatarEl = $("sidebar-avatar");
+    var nameEl = $("sidebar-user-name");
+    var badgeEl = $("sidebar-user-badge");
+    var roleEl = $("sidebar-user-role");
+    if (avatarEl) {
+      if (emoji) {
+        avatarEl.textContent = emoji;
+        avatarEl.style.background = _avatarGradient(color);
+        avatarEl.style.fontSize = "18px";
+      } else {
+        var initials = (displayName || username).slice(0, 2).toUpperCase();
+        avatarEl.textContent = initials;
+        avatarEl.style.background = _avatarGradient(color);
+        avatarEl.style.fontSize = "13px";
+      }
+      // Apply outline ring
+      if (outline && AVATAR_COLORS[outline]) {
+        avatarEl.style.boxShadow = "0 0 0 3px " + AVATAR_COLORS[outline][0];
+      } else {
+        avatarEl.style.boxShadow = "";
+      }
+    }
+    if (nameEl) nameEl.textContent = displayName || username;
+    if (badgeEl) {
+      badgeEl.textContent = badge;
+      badgeEl.style.display = badge ? "" : "none";
+    }
+    if (roleEl) {
+      roleEl.textContent = role;
+      roleEl.className = "sidebar-user-role sidebar-role-" + role;
+    }
+  }
+}
+
+window.doLogout = async function () {
+  try { await fetch("/api/logout", { method: "POST" }); } catch {}
+  window.location.reload();
+};
+
+// ─────────────────────────────────────────────────────────────
+// Profile Panel
+// ─────────────────────────────────────────────────────────────
+window.openProfilePanel = function () {
+  var existing = $("profile-panel");
+  if (existing) { existing.remove(); }
+
+  var currentTheme = localStorage.getItem("theme") || "dark";
+  var soundOn = !!window._soundAlertEnabled;
+  var selectedColor = window._userAvatarColor || "blue";
+  var selectedEmoji = window._userAvatarEmoji || "";
+  var selectedOutline = window._userAvatarOutline || "";
+  var checkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+  var swatchesHtml = Object.keys(AVATAR_COLORS).map(function (name) {
+    var grad = _avatarGradient(name);
+    var sel = name === selectedColor ? " profile-swatch-selected" : "";
+    return '<button class="profile-swatch' + sel + '" data-color="' + name + '" title="' + name + '" style="background:' + grad + ';">' +
+      (name === selectedColor ? checkSvg : '') +
+      '</button>';
+  }).join("");
+
+  // Outline color swatches (same 8 colors + None)
+  var outlineSwatchesHtml = '<button class="profile-outline-swatch' + (!selectedOutline ? ' profile-outline-selected' : '') + '" data-outline="" title="None" style="background:var(--card-bg);border:2px dashed var(--card-border);">&#x2715;</button>';
+  outlineSwatchesHtml += Object.keys(AVATAR_COLORS).map(function (name) {
+    var grad = _avatarGradient(name);
+    var sel = name === selectedOutline ? " profile-outline-selected" : "";
+    return '<button class="profile-outline-swatch' + sel + '" data-outline="' + name + '" title="' + name + '" style="background:' + grad + ';">' +
+      (name === selectedOutline ? checkSvg : '') +
+      '</button>';
+  }).join("");
+
+  // Emoji grid
+  var emojiHtml = '<button class="profile-emoji-btn' + (!selectedEmoji ? ' profile-emoji-selected' : '') + '" data-emoji="" title="No emoji (use initials)">&#x2715;</button>';
+  emojiHtml += AVATAR_EMOJIS.map(function (em) {
+    var sel = em === selectedEmoji ? " profile-emoji-selected" : "";
+    return '<button class="profile-emoji-btn' + sel + '" data-emoji="' + em + '" title="' + em + '">' + em + '</button>';
+  }).join("");
+
+  var html =
+    '<div class="profile-overlay" id="profile-panel" onclick="if(event.target===this)closeProfilePanel()">' +
+      '<div class="profile-card">' +
+        '<div class="profile-header">' +
+          '<h3>Profile Settings</h3>' +
+          '<button class="profile-close-btn" onclick="closeProfilePanel()" title="Close">' +
+            '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+          '</button>' +
+        '</div>' +
+
+        '<div class="profile-section">' +
+          '<label class="profile-label">Avatar Color</label>' +
+          '<div class="profile-swatch-grid" id="profile-swatch-grid">' + swatchesHtml + '</div>' +
+        '</div>' +
+
+        '<div class="profile-section">' +
+          '<label class="profile-label">Avatar Emoji</label>' +
+          '<div class="profile-emoji-grid" id="profile-emoji-grid">' + emojiHtml + '</div>' +
+        '</div>' +
+
+        '<div class="profile-section">' +
+          '<label class="profile-label">Outline / Highlight</label>' +
+          '<div class="profile-swatch-grid" id="profile-outline-grid">' + outlineSwatchesHtml + '</div>' +
+        '</div>' +
+
+        '<div class="profile-section">' +
+          '<label class="profile-label" for="profile-fullname">Display Name</label>' +
+          '<input class="inp profile-input" id="profile-fullname" type="text" maxlength="50" placeholder="Your name" value="' + safeText(window._userFullName || "") + '" />' +
+        '</div>' +
+
+        (window._userBadgeNumber ? '<div class="profile-section"><label class="profile-label">Badge Number</label><span class="muted" style="font-size:13px;">' + safeText(window._userBadgeNumber) + '</span></div>' : '') +
+
+        '<div class="profile-divider"></div>' +
+
+        '<div class="profile-section">' +
+          '<div class="profile-toggle-row">' +
+            '<span class="profile-toggle-label">Theme</span>' +
+            '<button class="profile-toggle-btn" id="profile-theme-toggle" onclick="_profileToggleTheme()">' +
+              (currentTheme === "dark" ? "Dark" : "Light") +
+            '</button>' +
+          '</div>' +
+          '<div class="profile-toggle-row">' +
+            '<span class="profile-toggle-label">Sound Alerts</span>' +
+            '<button class="profile-toggle-btn" id="profile-sound-toggle" onclick="_profileToggleSound()">' +
+              (soundOn ? "On" : "Off") +
+            '</button>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="profile-divider"></div>' +
+
+        '<div class="profile-section">' +
+          '<button class="btn ghost profile-action-btn" onclick="closeProfilePanel();showPasswordChangeOverlay(true);">Change Password</button>' +
+        '</div>' +
+
+        '<div class="profile-actions">' +
+          '<button class="btn ghost profile-signout-btn" onclick="doLogout()">Sign Out</button>' +
+          '<div class="profile-actions-right">' +
+            '<button class="btn ghost" onclick="closeProfilePanel()">Close</button>' +
+            '<button class="btn primary" id="profile-save-btn" onclick="_saveProfile()">Save</button>' +
+          '</div>' +
+        '</div>' +
+
+      '</div>' +
+    '</div>';
+
+  document.body.insertAdjacentHTML("beforeend", html);
+
+  // Swatch click handler
+  var grid = $("profile-swatch-grid");
+  if (grid) {
+    grid.addEventListener("click", function (e) {
+      var btn = e.target.closest(".profile-swatch");
+      if (!btn) return;
+      grid.querySelectorAll(".profile-swatch").forEach(function (s) {
+        s.classList.remove("profile-swatch-selected");
+        s.innerHTML = "";
+      });
+      btn.classList.add("profile-swatch-selected");
+      btn.innerHTML = checkSvg;
+    });
+  }
+
+  // Emoji click handler
+  var emojiGrid = $("profile-emoji-grid");
+  if (emojiGrid) {
+    emojiGrid.addEventListener("click", function (e) {
+      var btn = e.target.closest(".profile-emoji-btn");
+      if (!btn) return;
+      emojiGrid.querySelectorAll(".profile-emoji-btn").forEach(function (s) {
+        s.classList.remove("profile-emoji-selected");
+      });
+      btn.classList.add("profile-emoji-selected");
+    });
+  }
+
+  // Outline swatch click handler
+  var outlineGrid = $("profile-outline-grid");
+  if (outlineGrid) {
+    outlineGrid.addEventListener("click", function (e) {
+      var btn = e.target.closest(".profile-outline-swatch");
+      if (!btn) return;
+      outlineGrid.querySelectorAll(".profile-outline-swatch").forEach(function (s) {
+        s.classList.remove("profile-outline-selected");
+        s.innerHTML = s.dataset.outline ? "" : "&#x2715;";
+      });
+      btn.classList.add("profile-outline-selected");
+      if (btn.dataset.outline) btn.innerHTML = checkSvg;
+    });
+  }
+
+  // Animate in
+  requestAnimationFrame(function () {
+    var overlay = $("profile-panel");
+    if (overlay) overlay.classList.add("profile-overlay-visible");
+  });
+};
+
+window.closeProfilePanel = function () {
+  var panel = $("profile-panel");
+  if (!panel) return;
+  panel.classList.remove("profile-overlay-visible");
+  panel.classList.add("profile-overlay-closing");
+  setTimeout(function () { if (panel.parentNode) panel.remove(); }, 200);
+};
+
+window._profileToggleTheme = function () {
+  toggleTheme();
+  var btn = $("profile-theme-toggle");
+  if (btn) {
+    var t = localStorage.getItem("theme") || "dark";
+    btn.textContent = t === "dark" ? "Dark" : "Light";
+  }
+};
+
+window._profileToggleSound = function () {
+  toggleSoundAlert();
+  var btn = $("profile-sound-toggle");
+  if (btn) btn.textContent = window._soundAlertEnabled ? "On" : "Off";
+};
+
+window._saveProfile = async function () {
+  var saveBtn = $("profile-save-btn");
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving..."; }
+
+  var selectedSwatch = document.querySelector(".profile-swatch-selected");
+  var color = selectedSwatch ? selectedSwatch.dataset.color : (window._userAvatarColor || "blue");
+  var selectedEmojiBtn = document.querySelector(".profile-emoji-selected");
+  var emoji = selectedEmojiBtn ? (selectedEmojiBtn.dataset.emoji || "") : (window._userAvatarEmoji || "");
+  var selectedOutlineBtn = document.querySelector(".profile-outline-selected");
+  var outline = selectedOutlineBtn ? (selectedOutlineBtn.dataset.outline || "") : (window._userAvatarOutline || "");
+  var fullName = ($("profile-fullname") || {}).value || "";
+
+  try {
+    var res = await fetch("/api/me/profile", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fullName: fullName, avatarColor: color, avatarEmoji: emoji, avatarOutline: outline }),
+    });
+    var data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || "Failed to save profile", "error");
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; }
+      return;
+    }
+    window._userFullName = data.fullName || fullName;
+    window._userAvatarColor = data.avatarColor || color;
+    window._userAvatarEmoji = data.avatarEmoji || "";
+    window._userAvatarOutline = data.avatarOutline || "";
+    _applySidebarAvatar();
+    showToast("Profile saved", "success");
+    closeProfilePanel();
+  } catch (err) {
+    showToast("Network error saving profile", "error");
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; }
   }
 };
 
@@ -146,6 +482,9 @@ async function loadAdminUsers() {
       const pwFlag = u.mustChangePassword ? ' <span style="font-size:10px;color:#f59e0b;" title="Must change password at next login">&#x26A0; pw change</span>' : '';
       const roleClickable = u.username === 'admin' ? '' : `role-badge-clickable" onclick="_toggleUserRole('${safeText(u.username)}','${nextRole}')`;
       const checkDisabled = u.username === 'admin' ? 'disabled' : '';
+      const permBtn = u.role === "admin"
+        ? '<span class="muted" style="font-size:11px;">All perms (admin)</span>'
+        : `<button class="btn btn-sm ghost" onclick="_togglePermEditor('${safeText(u.username)}')">Permissions</button>`;
       rows += `<tr>
         <td><input type="checkbox" class="user-bulk-check" value="${safeText(u.username)}" ${checkDisabled} onchange="_updateBulkBar()" /></td>
         <td><strong>${safeText(u.username)}</strong>${pwFlag}</td>
@@ -153,9 +492,13 @@ async function loadAdminUsers() {
         <td>${safeText(u.badgeNumber)}</td>
         <td><span class="role-badge ${roleCls} ${roleClickable}" title="${u.username === 'admin' ? 'Built-in admin' : 'Click to toggle role'}">${safeText(u.role)}</span></td>
         <td>
+          ${permBtn}
           <button class="btn btn-sm ghost" onclick="_showPasswordResetModal('${safeText(u.username)}')">Reset Password</button>
           ${u.username === 'admin' ? '' : `<button class="btn btn-sm ghost" style="color:#f87171;" onclick="_deleteUser('${safeText(u.username)}')">Delete</button>`}
         </td>
+      </tr>
+      <tr class="perm-expand-row" id="perm-row-${safeText(u.username)}" style="display:none;">
+        <td colspan="6"><div class="perm-editor" id="perm-editor-${safeText(u.username)}"></div></td>
       </tr>`;
     }
 
@@ -332,6 +675,96 @@ window._deleteUser = async function (username) {
     loadAdminUsers();
     loadAdminStats();
   } catch (e) { showToast("Delete failed: " + e.message, "error"); }
+};
+
+// ─────────────────────────────────────────────────────────────
+// Permission Editor (inline expand)
+// ─────────────────────────────────────────────────────────────
+var _permMeta = null;
+var _openPermUser = null;
+
+window._togglePermEditor = async function (username) {
+  // Close previous
+  if (_openPermUser && _openPermUser !== username) {
+    var prevRow = $("perm-row-" + _openPermUser);
+    if (prevRow) prevRow.style.display = "none";
+  }
+
+  var row = $("perm-row-" + username);
+  if (!row) return;
+
+  // Toggle
+  if (row.style.display !== "none") {
+    row.style.display = "none";
+    _openPermUser = null;
+    return;
+  }
+  _openPermUser = username;
+  row.style.display = "";
+
+  var editor = $("perm-editor-" + username);
+  if (!editor) return;
+  editor.innerHTML = '<div class="muted" style="padding:12px;">Loading permissions...</div>';
+
+  // Fetch metadata if needed
+  if (!_permMeta) {
+    try { _permMeta = await apiGet("/api/admin/permissions-metadata"); }
+    catch { editor.innerHTML = '<div style="color:#f87171;padding:12px;">Failed to load permission metadata</div>'; return; }
+  }
+
+  // Fetch current user permissions
+  var userPerms = {};
+  try {
+    var users = await apiGet("/api/admin/users");
+    userPerms = (users[username] && users[username].permissions) || {};
+  } catch { /* use defaults */ }
+
+  // Merge with defaults for any missing keys
+  var defaults = _permMeta.defaults || {};
+  var effective = {};
+  for (var k of _permMeta.allKeys) {
+    effective[k] = k in userPerms ? !!userPerms[k] : !!defaults[k];
+  }
+
+  // Render groups
+  var html = '<div class="perm-editor-inner">';
+  for (var group of _permMeta.groups) {
+    html += '<div class="perm-group">';
+    html += '<div class="perm-group-title">' + safeText(group.label) + '</div>';
+    html += '<div class="perm-toggles">';
+    for (var pKey of group.perms) {
+      var label = (_permMeta.labels && _permMeta.labels[pKey]) || pKey;
+      var checked = effective[pKey] ? "checked" : "";
+      html += '<label class="perm-toggle-label">' +
+        '<span>' + safeText(label) + '</span>' +
+        '<label class="perm-slider-wrap"><input type="checkbox" class="perm-cb" data-perm="' + pKey + '" ' + checked + ' /><span class="perm-slider"></span></label>' +
+        '</label>';
+    }
+    html += '</div></div>';
+  }
+  html += '<div style="display:flex;gap:8px;margin-top:10px;">' +
+    '<button class="btn btn-sm primary" onclick="_savePermissions(\'' + safeText(username) + '\')">Save Permissions</button>' +
+    '<button class="btn btn-sm ghost" onclick="_togglePermEditor(\'' + safeText(username) + '\')">Cancel</button>' +
+    '</div></div>';
+  editor.innerHTML = html;
+};
+
+window._savePermissions = async function (username) {
+  var editor = $("perm-editor-" + username);
+  if (!editor) return;
+  var perms = {};
+  editor.querySelectorAll(".perm-cb").forEach(function (cb) {
+    perms[cb.dataset.perm] = cb.checked;
+  });
+  try {
+    await apiPatch("/api/admin/users/" + encodeURIComponent(username) + "/permissions", { permissions: perms });
+    showToast("Permissions updated for " + username, "success");
+    var row = $("perm-row-" + username);
+    if (row) row.style.display = "none";
+    _openPermUser = null;
+  } catch (e) {
+    showToast("Save permissions failed: " + e.message, "error");
+  }
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -574,6 +1007,7 @@ async function loadAdminWorkflows() {
         <td>
           <button class="btn btn-sm ghost" onclick="_editWorkflow('${safeText(wf.id)}')">Edit</button>
           <button class="btn btn-sm ghost" onclick="_duplicateWorkflow('${safeText(wf.id)}')">Duplicate</button>
+          <button class="btn btn-sm ghost" style="color:#22c55e;" onclick="_quickAddTask('${safeText(wf.id)}')">+ Task</button>
           <button class="btn btn-sm ghost" style="color:#f87171;" onclick="_deleteWorkflow('${safeText(wf.id)}')">Delete</button>
         </td>
       </tr>`;
@@ -617,6 +1051,98 @@ window._toggleWorkflowEnabled = async function (wfId, enabled) {
     _adminTabLoaded.workflows = false;
     loadAdminWorkflows();
   } catch (e) { showToast("Toggle failed: " + e.message, "error"); }
+};
+
+window._quickAddTask = async function (wfId) {
+  let wfData = {};
+  try {
+    const all = await apiGet("/api/admin/workflows");
+    wfData = all[wfId] || {};
+  } catch { showToast("Failed to load workflow", "error"); return; }
+
+  const tasks = wfData.tasks || {};
+  const groupKeys = Object.keys(tasks);
+  const groupOptions = groupKeys.length
+    ? groupKeys.map(g => `<option value="${safeText(g)}">${safeText(g)}</option>`).join("")
+    : "";
+
+  const container = $("confirm-modal-container");
+  if (!container) return;
+  container.innerHTML = `
+    <div class="confirm-overlay" id="quick-task-overlay">
+      <div class="confirm-card" style="max-width:420px;">
+        <div class="confirm-title">Add Task to <code>${safeText(wfId)}</code></div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin:12px 0;">
+          <div>
+            <label class="muted" style="font-size:11px;">Task Group</label>
+            <div style="display:flex;gap:6px;">
+              <select id="qt-group-sel" class="inp" style="flex:1;" onchange="var o=$('qt-group-new');if(this.value==='__new__'){o.style.display='';o.focus();}else{o.style.display='none';}">
+                ${groupOptions}
+                <option value="__new__">+ New Group...</option>
+              </select>
+              <input class="inp" id="qt-group-new" placeholder="new_group_key" style="flex:1;display:none;" />
+            </div>
+          </div>
+          <div>
+            <label class="muted" style="font-size:11px;">Task ID</label>
+            <input class="inp" id="qt-task-id" placeholder="e.g. firmware_update" style="width:100%;" />
+          </div>
+          <div>
+            <label class="muted" style="font-size:11px;">Task Label</label>
+            <input class="inp" id="qt-task-label" placeholder="e.g. Firmware Update" style="width:100%;" />
+          </div>
+          <div>
+            <label class="muted" style="font-size:11px;">Ansible Tags (comma-separated)</label>
+            <input class="inp" id="qt-task-tags" placeholder="e.g. firmware,update" style="width:100%;" />
+          </div>
+        </div>
+        <div id="qt-error" style="color:#f87171;font-size:12px;display:none;padding-bottom:8px;"></div>
+        <div class="confirm-actions">
+          <button class="btn ghost" onclick="document.getElementById('quick-task-overlay').remove()">Cancel</button>
+          <button class="btn primary" onclick="_submitQuickTask('${safeText(wfId)}')">Add Task</button>
+        </div>
+      </div>
+    </div>`;
+  // Auto-focus first input, select first group if exists
+  setTimeout(() => { const el = $("qt-task-id"); if (el) el.focus(); }, 50);
+};
+
+window._submitQuickTask = async function (wfId) {
+  const groupSel = $("qt-group-sel");
+  const groupNew = $("qt-group-new");
+  const errEl = $("qt-error");
+  const group = groupSel.value === "__new__" ? (groupNew?.value || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "_") : groupSel.value;
+  const taskId = ($("qt-task-id")?.value || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
+  const taskLabel = ($("qt-task-label")?.value || "").trim();
+  const tags = ($("qt-task-tags")?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+
+  if (!group || !taskId || !taskLabel) {
+    if (errEl) { errEl.textContent = "Group, Task ID, and Label are required"; errEl.style.display = ""; }
+    return;
+  }
+
+  try {
+    const all = await apiGet("/api/admin/workflows");
+    const wf = all[wfId];
+    if (!wf) { showToast("Workflow not found", "error"); return; }
+
+    if (!wf.tasks) wf.tasks = {};
+    if (!wf.tasks[group]) wf.tasks[group] = [];
+
+    // Check for duplicate task ID in this group
+    if (wf.tasks[group].some(t => t.id === taskId)) {
+      if (errEl) { errEl.textContent = `Task '${taskId}' already exists in group '${group}'`; errEl.style.display = ""; }
+      return;
+    }
+
+    wf.tasks[group].push({ id: taskId, label: taskLabel, tags: tags.length ? tags : [taskId] });
+    await apiPut(`/api/admin/workflows/${encodeURIComponent(wfId)}`, wf);
+    showToast(`Task '${taskLabel}' added to ${wfId}`, "success");
+    const overlay = $("quick-task-overlay");
+    if (overlay) overlay.remove();
+    _adminTabLoaded.workflows = false;
+    loadAdminWorkflows();
+  } catch (e) { showToast("Save failed: " + e.message, "error"); }
 };
 
 window._duplicateWorkflow = async function (wfId) {
