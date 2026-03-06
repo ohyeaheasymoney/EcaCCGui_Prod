@@ -14,8 +14,8 @@ import config
 BASE_DIR = getattr(config, "BASE_DIR", "/tmp")
 PROJECT_DIR = getattr(config, "PROJECT_DIR", "/tmp")
 
-ASSET_DB_PATH = getattr(config, "DEFAULT_CSV", os.path.join(BASE_DIR, "asset_db_tags2.csv"))
-FIRMWARE_CSV = getattr(config, "FIRMWARE_CSV", os.path.join(BASE_DIR, "Firmware/Firmware.csv"))
+ASSET_DB_PATH = os.environ.get("QC_MAPPING_FILE") or getattr(config, "DEFAULT_CSV", os.path.join(BASE_DIR, "asset_db_tags2.csv"))
+FIRMWARE_CSV = os.environ.get("QC_FIRMWARE_CSV") or getattr(config, "FIRMWARE_CSV", os.path.join(BASE_DIR, "Firmware/Firmware.csv"))
 
 FAILED_INVENTORY_PATH = getattr(
     config, "FAILED_INVENTORY_PATH", os.path.join(PROJECT_DIR, "failed_hosts_inventory")
@@ -99,7 +99,7 @@ def _find_columns(rows):
 
     lookup = {
         "serial": {"serialnumber", "serial", "servicetag"},
-        "asset": {"assettag", "asset_tag", "asset"},
+        "asset": {"assettag", "asset_tag", "asset", "assetnumber", "asset_number"},
         "ru": {"rackunit", "rack_unit", "ru"},
     }
 
@@ -211,6 +211,30 @@ def run_self_qc(record):
 
 NIC_KEYWORDS = {"E810": "E810", "X710": "X710", "BROA": "Broadcom"}
 
+# ── Firmware QC: skip non-server components ──
+SKIP_PREFIXES = [
+    "Power Supply",
+    "Disk ",
+    "Dell 64 Bit uEFI Diagnostics",
+    "Bootstrap OS",
+    "Dell OS Driver Pack",
+    "Dell iDRAC Service Module",
+    "TPM",
+]
+
+def _is_server_firmware(name):
+    return not any(name.startswith(p) for p in SKIP_PREFIXES)
+
+# ── Firmware QC: exact-match overrides ──
+# Keys = firmware_name values from Firmware.csv (upper-cased).
+# Values = exact ElementName that must match in the iDRAC inventory.
+MATCH_OVERRIDES = {
+    "RAC":  "Integrated Dell Remote Access Controller",
+    "BIOS": "BIOS",
+    "CPLD": "System CPLD",
+    "LC":   "Lifecycle Controller",
+}
+
 
 def read_expected_versions():
     if not os.path.exists(FIRMWARE_CSV):
@@ -257,7 +281,11 @@ def firmware_qc_for_host(fwinfo, expected):
     if not fw_items:
         return "UNKNOWN", ["No firmware inventory data from iDRAC"]
 
+    # Filter to server-only components
+    fw_items = [item for item in fw_items if _is_server_firmware(item.get("ElementName", ""))]
+
     failed = 0
+    passed = 0
     unknown = 0
     issues = []
 
@@ -268,10 +296,17 @@ def firmware_qc_for_host(fwinfo, expected):
         exp = None
         name_upper = (name or "").upper()
         for e in expected:
+            # Check NIC keyword match first
             if e["nic_match"] and e["nic_match"] in name_upper:
                 exp = e["firmware_version"]
                 break
-            if e["firmware_name"] in name_upper:
+            # Use exact match for overridden names, substring for others
+            override_target = MATCH_OVERRIDES.get(e["firmware_name"])
+            if override_target is not None:
+                if name == override_target:
+                    exp = e["firmware_version"]
+                    break
+            elif e["firmware_name"] in name_upper:
                 exp = e["firmware_version"]
                 break
 
@@ -279,7 +314,8 @@ def firmware_qc_for_host(fwinfo, expected):
             unknown += 1
             issues.append(f"[FW UNKNOWN] {name}: current={curr}, no catalog entry")
         elif exp == curr:
-            continue
+            passed += 1
+            issues.append(f"[FW PASS] {name}: current={curr}, expected={exp}")
         else:
             failed += 1
             issues.append(f"[FW FAIL] {name}: current={curr}, expected={exp}")
@@ -348,7 +384,11 @@ def quickqc_process(json_path):
             nics.append(f"{nic} ({ver})")
 
     phys = len(sysinfo.get("PhysicalDisk", []))
-    virt = len(sysinfo.get("VirtualDisk", []))
+    virt_disks_list = sysinfo.get("VirtualDisk", [])
+    virt = len(virt_disks_list)
+    virt_disk_names = [vd.get("Name") or vd.get("FQDD", "N/A") for vd in virt_disks_list]
+
+    boot_mode = data.get("boot_mode", "N/A")
 
     record = {
         "host": host,
@@ -364,6 +404,8 @@ def quickqc_process(json_path):
         "backplane": backplane,
         "phys_disks": phys,
         "virt_disks": virt,
+        "virt_disk_names": virt_disk_names,
+        "boot_mode": boot_mode,
     }
 
     map_status, map_issues = run_self_qc(record)
@@ -392,8 +434,6 @@ def quickqc_process(json_path):
     failed_mapping_rows = []
 
     with open(final_txt, "w") as out:
-        out.write(f"Quick QC Run Timestamp: {ts}\n\n")
-
         map_pass = map_fail = 0
         fw_pass = fw_fail = fw_unknown = 0
 
@@ -401,75 +441,11 @@ def quickqc_process(json_path):
             map_qc = it.get("map_qc_status", "UNKNOWN")
             fw_qc = it.get("fw_qc_status", "UNKNOWN")
 
-            if map_qc == "PASS":
-                map_pass += 1
-            elif map_qc == "FAIL":
-                map_fail += 1
-
-            if fw_qc == "PASS":
-                fw_pass += 1
-            elif fw_qc == "FAIL":
-                fw_fail += 1
-            else:
-                fw_unknown += 1
-
-            if map_qc == "PASS":
-                map_emoji = "PASS ✅"
-            elif map_qc == "FAIL":
-                map_emoji = "FAIL ❌"
-            else:
-                map_emoji = "UNKNOWN ❓"
-
-            if fw_qc == "PASS":
-                fw_emoji = "PASS ✅"
-            elif fw_qc == "FAIL":
-                fw_emoji = "FAIL ❌"
-            else:
-                fw_emoji = "UNKNOWN ❓"
-
-            map_label_colored = color_status(map_qc)
-            fw_label_colored = color_status(fw_qc)
-
-            out.write(
-                f"───── Dell Server Inventory ───── "
-                f"Mapping {map_emoji} ({map_label_colored}) | "
-                f"Firmware {fw_emoji} ({fw_label_colored})\n"
-            )
-
-            map_issue_short = "; ".join(it.get("map_qc_issues") or [])
-            fw_issue_list = it.get("fw_qc_issues") or []
-
-            fw_fail_count = sum(1 for x in fw_issue_list if x.startswith("[FW FAIL]"))
-            fw_unknown_count = sum(1 for x in fw_issue_list if x.startswith("[FW UNKNOWN]"))
-
-            if fw_qc == "PASS":
-                fw_summary = "All firmware versions match catalog"
-            elif fw_qc == "FAIL":
-                fw_summary = f"{fw_fail_count} mismatched, {fw_unknown_count} unknown"
-            else:
-                fw_summary = "Firmware catalog missing or no firmware"
-
-            qc_summary = f"Mapping: {map_issue_short}; Firmware: {fw_summary}"
-
-            line = (
-                f"Host: {it['host']}, Serial Number: {it['serial']}, "
-                f"MappingQC: {map_qc}, FirmwareQC: {fw_qc}, "
-                f"Asset Tag: {it['asset']}, Rack Offset: {it['rack_offset']}, "
-                f"BIOS Version: {it['bios_ver']}, "
-                f"iDRAC Firmware: {it['idrac_ver']}, "
-                f"System CPLD: {it['cpld']}, "
-                f"Chassis CM Embedded: {it['chassis_cm']}, "
-                f"Controllers: {', '.join(it['controllers']) or 'N/A'}, "
-                f"NICs: {', '.join(it['nics']) or 'N/A'}, "
-                f"Backplane: {it['backplane']}, "
-                f"Physical Disks: {it['phys_disks']}, "
-                f"Virtual Disks: {it['virt_disks']}, "
-                f"Timestamp: {ts}, "
-                f"QC Issues: {qc_summary}"
-            )
-
-            out.write(line + "\n")
-            out.write("─────────────────────────────────\n\n")
+            if map_qc == "PASS":    map_pass += 1
+            elif map_qc == "FAIL":  map_fail += 1
+            if fw_qc == "PASS":     fw_pass += 1
+            elif fw_qc == "FAIL":   fw_fail += 1
+            else:                    fw_unknown += 1
 
             if map_qc == "FAIL":
                 failed_mapping_rows.append(
@@ -484,27 +460,12 @@ def quickqc_process(json_path):
                 )
 
         total = len(items)
-        out.write("===== Quick QC Summary =====\n")
         out.write(
-            f"Hosts: {total}, "
-            f"Mapping PASS: {map_pass}, Mapping FAIL: {map_fail}, "
-            f"Firmware PASS: {fw_pass}, Firmware FAIL: {fw_fail}, Firmware UNKNOWN: {fw_unknown}\n"
+            f"Quick QC Summary — {ts}\n"
+            f"Hosts: {total} | "
+            f"Mapping: {map_pass} PASS, {map_fail} FAIL | "
+            f"Firmware: {fw_pass} PASS, {fw_fail} FAIL, {fw_unknown} UNKNOWN\n"
         )
-        out.write(f"Run Timestamp: {ts}\n")
-
-        out.write("\n===== Mapping QC Detail =====\n")
-        if not failed_mapping_rows:
-            out.write("All hosts passed mapping checks. ✅\n")
-        else:
-            out.write("The following hosts FAILED mapping QC:\n\n")
-            for row in failed_mapping_rows:
-                issues_str = "; ".join(row["issues"]) or "Unknown issue"
-                issues_str_colored = f"{RED}{issues_str}{RESET}"
-                out.write(
-                    f"- Host: {row['host']}, Serial: {row['serial']}, "
-                    f"Asset: {row['asset']}, RackOffset: {row['rack_offset']}\n"
-                )
-                out.write(f"  Issues: {issues_str_colored}\n\n")
 
 
     # ────────────────────────────────────────────────────────────────
@@ -519,6 +480,7 @@ def quickqc_process(json_path):
             "FirmwareQC",
             "Asset",
             "RackOffset",
+            "BootMode",
             "BIOS",
             "iDRAC",
             "CPLD",
@@ -528,6 +490,7 @@ def quickqc_process(json_path):
             "Backplane",
             "PhysDisks",
             "VirtDisks",
+            "VirtDiskNames",
             "Timestamp",
             "MappingIssues",
             "FirmwareIssues",
@@ -541,6 +504,7 @@ def quickqc_process(json_path):
                 it.get("fw_qc_status", "UNKNOWN"),
                 it["asset"],
                 it["rack_offset"],
+                it.get("boot_mode", "N/A"),
                 it["bios_ver"],
                 it["idrac_ver"],
                 it["cpld"],
@@ -550,6 +514,7 @@ def quickqc_process(json_path):
                 it["backplane"],
                 it["phys_disks"],
                 it["virt_disks"],
+                ", ".join(it.get("virt_disk_names", [])) or "None",
                 ts,
                 "; ".join(it.get("map_qc_issues") or []),
                 "; ".join(it.get("fw_qc_issues") or []),
