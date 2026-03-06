@@ -14,11 +14,60 @@ var _currentJobId = null;
 // Save job field
 // ─────────────────────────────────────────────────────────────
 window.saveJobField = async function (jobId, field, value) {
+  const input = qs(`.ie-field[data-field="${field}"]`);
+  const previousValue = input ? input.defaultValue : undefined;
+
+  // ── Optimistic: flash green + update cache + header immediately ──
+  if (input) {
+    input.defaultValue = value;
+    input.classList.remove("save-flash");
+    void input.offsetWidth;
+    input.classList.add("save-flash");
+    setTimeout(() => input.classList.remove("save-flash"), 1500);
+  }
+  const decodedId = decodeURIComponent(jobId);
+  if (window._allJobs) {
+    const cached = window._allJobs.find(j => (j.jobId || j.id || j.job_id) === decodedId);
+    if (cached) cached[field] = value;
+  }
+  if (field === "jobName") {
+    const titleEl = qs(".title-main");
+    if (titleEl) {
+      const badge = titleEl.querySelector(".status-badge");
+      titleEl.textContent = "";
+      titleEl.appendChild(document.createTextNode(value + " "));
+      if (badge) titleEl.appendChild(badge);
+    }
+  } else if (field === "rackId") {
+    const subEl = qs(".title-sub");
+    if (subEl) subEl.textContent = value ? "Rack " + value : "";
+  }
+
+  // ── Background API call — rollback on failure ──
   try {
     await apiPatch(`/api/jobs/${encodeURIComponent(jobId)}`, { [field]: value });
-    showToast(`${field} saved`, "success", 1500);
-    loadJobs();
   } catch (e) {
+    // Rollback optimistic changes
+    if (input && previousValue !== undefined) {
+      input.value = previousValue;
+      input.defaultValue = previousValue;
+    }
+    if (window._allJobs) {
+      const cached = window._allJobs.find(j => (j.jobId || j.id || j.job_id) === decodedId);
+      if (cached && previousValue !== undefined) cached[field] = previousValue;
+    }
+    if (field === "jobName" && previousValue !== undefined) {
+      const titleEl = qs(".title-main");
+      if (titleEl) {
+        const badge = titleEl.querySelector(".status-badge");
+        titleEl.textContent = "";
+        titleEl.appendChild(document.createTextNode(previousValue + " "));
+        if (badge) titleEl.appendChild(badge);
+      }
+    } else if (field === "rackId" && previousValue !== undefined) {
+      const subEl = qs(".title-sub");
+      if (subEl) subEl.textContent = previousValue ? "Rack " + previousValue : "";
+    }
     showToast(`Save failed: ${e.message}`, "error");
   }
 };
@@ -189,16 +238,29 @@ function closeJobPanel(force) {
   _runStartTime = null;
   _dirtyFields.clear();
 
-  if ($("wizard-container")) $("wizard-container").innerHTML = "";
+  const container = $("wizard-container");
+  if (!container) return;
+  const panel = container.querySelector(".job-panel");
+  const backdrop = container.querySelector(".panel-backdrop");
+  if (panel) {
+    panel.classList.add("panel-closing");
+    if (backdrop) backdrop.classList.add("backdrop-closing");
+    const clear = () => { container.innerHTML = ""; };
+    panel.addEventListener("animationend", clear, { once: true });
+    setTimeout(clear, 250); // safety timeout
+  } else {
+    container.innerHTML = "";
+  }
 }
 
 window.openJobPanel = openJobPanel;
 window.closeJobPanel = closeJobPanel;
 
 // ─────────────────────────────────────────────────────────────
-// Tab completion indicators
+// Combined readiness check (tab indicators + run button state)
+// Single Promise.all instead of 4 redundant API calls
 // ─────────────────────────────────────────────────────────────
-async function updateTabChecks(jobId) {
+async function updateJobReadiness(jobId) {
   if (!jobId || !$("job-panel")) return;
   try {
     const [inv, job] = await Promise.all([
@@ -209,39 +271,40 @@ async function updateTabChecks(jobId) {
     const files = normalizeFiles(job);
     const hasWorkbook = files.some(f => f.role === "workbook");
 
+    // ── Tab completion indicators (count badges + completed class) ──
+    const hostCount = (inv.hosts || []).length;
+    const fileCount = files.length;
     const invTab = qs('.modal-tab[data-tab="tab-inventory"]');
     const uplTab = qs('.modal-tab[data-tab="tab-upload"]');
+    const ovTab  = qs('.modal-tab[data-tab="tab-overview"]');
+
+    // Overview is always completed (job exists by definition)
+    if (ovTab) ovTab.classList.add("completed");
+
     if (invTab) {
       let check = invTab.querySelector(".tab-check");
       if (hasHosts) {
         if (!check) { check = document.createElement("span"); check.className = "tab-check"; invTab.appendChild(check); }
-        check.textContent = "\u2713";
-      } else if (check) { check.remove(); }
+        check.textContent = hostCount;
+        invTab.classList.add("completed");
+      } else {
+        if (check) check.remove();
+        invTab.classList.remove("completed");
+      }
     }
     if (uplTab) {
       let check = uplTab.querySelector(".tab-check");
-      if (hasWorkbook) {
+      if (fileCount > 0) {
         if (!check) { check = document.createElement("span"); check.className = "tab-check"; uplTab.appendChild(check); }
-        check.textContent = "\u2713";
-      } else if (check) { check.remove(); }
+        check.textContent = fileCount;
+        uplTab.classList.add("completed");
+      } else {
+        if (check) check.remove();
+        uplTab.classList.remove("completed");
+      }
     }
-  } catch { /* silent */ }
-}
 
-// ─────────────────────────────────────────────────────────────
-// Proactive run button disable
-// ─────────────────────────────────────────────────────────────
-async function updateRunButtonState(jobId) {
-  if (!jobId || !$("job-panel")) return;
-  try {
-    const [inv, job] = await Promise.all([
-      apiGet(`/api/jobs/${encodeURIComponent(jobId)}/inventory_hosts`).catch(() => ({ hosts: [] })),
-      apiGet(`/api/jobs/${encodeURIComponent(jobId)}`).catch(() => ({})),
-    ]);
-    const hasHosts = (inv.hosts || []).length > 0;
-    const files = normalizeFiles(job);
-    const hasWorkbook = files.some(f => f.role === "workbook");
-
+    // ── Run button state ──
     const reasons = [];
     if (!hasHosts) reasons.push("No inventory generated");
     if (!hasWorkbook) reasons.push("No workbook uploaded");
@@ -259,7 +322,6 @@ async function updateRunButtonState(jobId) {
       }
     });
 
-    // Show/update visible disabled reason element
     let reasonEl = $("run-disabled-reason");
     if (reasons.length > 0 && (job.status || "saved") !== "running") {
       if (!reasonEl) {
@@ -277,6 +339,10 @@ async function updateRunButtonState(jobId) {
     }
   } catch { /* silent */ }
 }
+
+// Backward-compatible aliases for call sites in other files
+function updateTabChecks(jobId) { return updateJobReadiness(jobId); }
+function updateRunButtonState(jobId) { /* no-op: merged into updateJobReadiness */ }
 
 // ─────────────────────────────────────────────────────────────
 // Job status timeline (Overview tab)
@@ -412,8 +478,8 @@ function renderJobPanel(job) {
       <div class="panel-header-spacer">
         <div class="panel-header-actions">
           <button class="btn-icon" onclick="copyJobId('${safeText(jobId)}')" title="Copy Job ID" aria-label="Copy Job ID"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-          <button class="btn-icon" onclick="cloneJob('${ej}')" title="Clone Job" aria-label="Clone Job"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-          ${window._userRole === "admin" ? `<button class="btn-icon btn-icon-danger" onclick="deleteJobConfirm('${ej}')" title="Delete Job" aria-label="Delete Job"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ""}
+          ${hasPermission("jobs_create") ? `<button class="btn-icon" onclick="cloneJob('${ej}')" title="Clone Job" aria-label="Clone Job"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ""}
+          ${hasPermission("jobs_delete") ? `<button class="btn-icon btn-icon-danger" onclick="deleteJobConfirm('${ej}')" title="Delete Job" aria-label="Delete Job"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ""}
         </div>
         <button class="modal-close" onclick="closeJobPanel()" aria-label="Close panel">&times;</button>
       </div>
@@ -421,11 +487,12 @@ function renderJobPanel(job) {
 
     <!-- Modal Tabs (Step 1-4 + Status) -->
     <div class="modal-tabs" role="tablist">
-      <button class="modal-tab active" data-tab="tab-overview" role="tab" aria-selected="true" aria-controls="tab-overview"><span class="tab-step">1</span> Overview</button>
-      <button class="modal-tab" data-tab="tab-upload" role="tab" aria-selected="false" aria-controls="tab-upload"><span class="tab-step">2</span> Upload</button>
-      <button class="modal-tab" data-tab="tab-inventory" role="tab" aria-selected="false" aria-controls="tab-inventory"><span class="tab-step">3</span> Inventory</button>
-      <button class="modal-tab" data-tab="tab-tasks" role="tab" aria-selected="false" aria-controls="tab-tasks"><span class="tab-step">4</span> Tasks</button>
-      <button class="modal-tab" data-tab="tab-status" role="tab" aria-selected="false" aria-controls="tab-status">Status${isRunning ? ' <span class="tab-badge tab-badge-running">Live</span>' : ""}</button>
+      <button class="modal-tab active" data-tab="tab-overview" role="tab" aria-selected="true" aria-controls="tab-overview"><span class="tab-step">1</span> Overview <kbd class="tab-kbd">1</kbd></button>
+      <button class="modal-tab" data-tab="tab-upload" role="tab" aria-selected="false" aria-controls="tab-upload"><span class="tab-step">2</span> Upload <kbd class="tab-kbd">2</kbd></button>
+      <button class="modal-tab" data-tab="tab-inventory" role="tab" aria-selected="false" aria-controls="tab-inventory"><span class="tab-step">3</span> Inventory <kbd class="tab-kbd">3</kbd></button>
+      <button class="modal-tab" data-tab="tab-tasks" role="tab" aria-selected="false" aria-controls="tab-tasks"><span class="tab-step">4</span> Tasks <kbd class="tab-kbd">4</kbd></button>
+      <button class="modal-tab" data-tab="tab-qc" role="tab" aria-selected="false" aria-controls="tab-qc"><span class="tab-step">5</span> QC <kbd class="tab-kbd">5</kbd></button>
+      <button class="modal-tab" data-tab="tab-status" role="tab" aria-selected="false" aria-controls="tab-status"><span class="tab-step">6</span> Status <kbd class="tab-kbd">6</kbd>${isRunning ? ' <span class="tab-badge tab-badge-running">Live</span>' : ""}</button>
     </div>
 
     <div class="panel-body">
@@ -467,10 +534,10 @@ function renderJobPanel(job) {
         <div class="section" style="border-top:1px solid var(--card-border);padding-top:12px;margin-top:16px;">
           <h4>Job Actions</h4>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <button class="btn ghost" onclick="cloneJob('${ej}')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Clone Job</button>
-            <button class="btn ghost" onclick="saveAsTemplate('${ej}')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save as Template</button>
+            ${hasPermission("jobs_create") ? `<button class="btn ghost" onclick="cloneJob('${ej}')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Clone Job</button>` : ""}
+            ${hasPermission("templates_create") ? `<button class="btn ghost" onclick="saveAsTemplate('${ej}')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save as Template</button>` : ""}
             <div style="flex:1;"></div>
-            ${window._userRole === "admin" ? `<button class="btn danger" onclick="deleteJobConfirm('${ej}')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Delete Job</button>` : ""}
+            ${hasPermission("jobs_delete") ? `<button class="btn danger" onclick="deleteJobConfirm('${ej}')"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Delete Job</button>` : ""}
           </div>
         </div>
       </div>
@@ -481,11 +548,10 @@ function renderJobPanel(job) {
           ${helpToggleHtml("Upload requirements", "Upload the required files for this job. You need a <strong>workbook CSV</strong> (contains MAC addresses and server details), a <strong>BIOS XML config</strong> (server configuration template), and <strong>firmware files</strong> (.exe/.bin) for iDRAC and BIOS updates. After uploading firmware, generate the catalog below.")}
           <h4>Upload File ${helpTip("Upload workbook CSV (MAC/serial data), BIOS XML config, and firmware .exe/.bin files.")}</h4>
           <p class="muted" style="margin-bottom:8px;">Drag and drop files or click to browse. You can upload multiple files at once. Files are automatically categorized by extension.</p>
-          <div class="upload-zone" id="upload-zone">
+          <div class="upload-zone" id="upload-zone" ${hasPermission("files_upload") ? "" : 'style="display:none;"'}>
             <div class="upload-zone-inner">
               <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;margin-bottom:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              <div class="upload-zone-label">Drag files here or click to browse (multiple files supported)</div>
-              <div class="muted" style="margin-bottom:4px;">.csv = Workbook &nbsp; .xml = BIOS Config &nbsp; .exe/.bin = Firmware</div>
+              <div class="upload-zone-label">Drop files here or click to browse</div>
               <a href="#" class="csv-template-link" onclick="event.preventDefault();event.stopPropagation();downloadCsvTemplate()"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download blank CSV template</a>
               <div class="row" style="margin-top:10px;">
                 <input id="job_upload_file" type="file" class="upload-file-input" multiple />
@@ -498,7 +564,7 @@ function renderJobPanel(job) {
         <div class="section">
           <h4>Uploaded Files</h4>
           <p class="muted" style="margin-bottom:8px;">Files currently attached to this job. You can delete files you no longer need.</p>
-          <div id="all-files-list"><span class="muted">Loading...</span></div>
+          <div id="all-files-list">${skeletonRows(3)}</div>
         </div>
         <div class="section catalog-section">
           <div class="catalog-header">
@@ -545,7 +611,7 @@ function renderJobPanel(job) {
             </label>
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
-            <button class="btn primary" id="btn_generate_inventory">
+            <button class="btn primary" id="btn_generate_inventory" ${hasPermission("inventory_generate") ? "" : 'style="display:none;"'}>
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
               Scan Network
             </button>
@@ -594,7 +660,7 @@ function renderJobPanel(job) {
           <h4><span class="step-num">2</span> <span id="card2-title">Target Hosts</span> <span class="muted" id="host-picker-count"></span></h4>
           <p class="muted" id="card2-instructions" style="margin-bottom:6px;font-size:11px;">Select which hosts to target. Toggle selection with the button below. If none are selected, all hosts will be used.</p>
           <div id="host-picker-container" style="margin-top:6px;">
-            <span class="muted">Loading hosts...</span>
+            ${skeletonRows(2)}
           </div>
           <div id="network-fw-upload"></div>
         </div>
@@ -613,9 +679,9 @@ function renderJobPanel(job) {
           <div id="run-groups-container"></div>
           <button class="btn ghost" id="btn-add-run-group" style="display:none;margin:8px 0;" onclick="addRunGroup()">+ Add Run Group</button>
           <div class="run-controls" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
-            <button class="btn primary btn-lg" id="btn_run_tasks"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>Send It <kbd>R</kbd></button>
+            <button class="btn primary btn-lg" id="btn_run_tasks" ${hasPermission("jobs_run") ? "" : 'style="display:none;"'}><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>Send It <kbd>R</kbd></button>
             <div class="run-spacer"></div>
-            <button class="btn danger btn-sm" id="btn_stop_now"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>Stop</button>
+            <button class="btn danger btn-sm" id="btn_stop_now" ${hasPermission("jobs_stop") ? "" : 'style="display:none;"'}><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>Stop</button>
             <span class="muted" id="run_status" style="font-size:12px;">Idle</span>
           </div>
         </div>
@@ -635,7 +701,7 @@ function renderJobPanel(job) {
             <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-bar-inner" id="status-progress-fill"></div></div>
           </div>
           <div style="display:flex; gap:8px; align-items:center; margin-top:10px; justify-content:flex-end;">
-            <button class="btn danger" id="btn_status_stop"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>Stop Job</button>
+            <button class="btn danger" id="btn_status_stop" ${hasPermission("jobs_stop") ? "" : 'style="display:none;"'}><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>Stop Job</button>
           </div>
         </div>
 
@@ -647,7 +713,7 @@ function renderJobPanel(job) {
         <div class="section tsr-status-section" id="tsr-status-section">
           <div class="tsr-status-header">
             <h4>TSR Collection Status</h4>
-            <span class="tsr-status-badge" id="tsr-status-badge">loading...</span>
+            <span class="tsr-status-badge" id="tsr-status-badge"><span class="skeleton skeleton-inline"></span></span>
           </div>
           <p class="muted" style="margin-bottom:8px;font-size:11px;">TSR (Tech Support Report) files are diagnostic logs collected from each server's iDRAC. Green = collected, red = missing. Check the boxes to select files for download or re-run collection on missing hosts.</p>
           <div id="tsr-status-table"></div>
@@ -656,8 +722,8 @@ function renderJobPanel(job) {
             <button class="btn btn-sm ghost" id="btn_refresh_tsr">Refresh</button>
             <div class="run-spacer"></div>
             <button class="btn btn-sm primary" id="btn_rerun_missing_tsr" disabled>Re-run Selected</button>
-            <button class="btn btn-sm ghost" id="btn_download_selected_tsr" disabled>Download Selected</button>
-            <button class="btn btn-sm ghost" id="btn_delete_selected_tsr" disabled style="color:#f87171;border-color:rgba(248,113,113,0.3);">Delete Selected</button>
+            ${hasPermission("reports_download") ? `<button class="btn btn-sm ghost" id="btn_download_selected_tsr" disabled>Download Selected</button>` : ""}
+            ${hasPermission("tsr_delete") ? `<button class="btn btn-sm ghost" id="btn_delete_selected_tsr" disabled style="color:#f87171;border-color:rgba(248,113,113,0.3);">Delete Selected</button>` : ""}
           </div>
         </div>
 
@@ -729,12 +795,70 @@ function renderJobPanel(job) {
 
       </div>
 
+      <!-- Tab 6: Quality Validation -->
+      <div class="tab-panel" id="tab-qc" role="tabpanel">
+
+        <div class="qc-sub-tabs">
+          <button class="qc-sub-tab active" data-qc-sub="report">
+            <span class="qc-sub-tab-icon"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
+            <span class="qc-sub-tab-text">
+              <span class="qc-sub-tab-title">Quick QC Report</span>
+              <span class="qc-sub-tab-desc">Firmware &amp; mapping validation</span>
+            </span>
+          </button>
+          <button class="qc-sub-tab" data-qc-sub="checklist">
+            <span class="qc-sub-tab-icon"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
+            <span class="qc-sub-tab-text">
+              <span class="qc-sub-tab-title">QC Checklist</span>
+              <span class="qc-sub-tab-desc">Pre-deployment checks</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="qc-sub-panel active" id="qc-sub-report">
+          <!-- Top bar: firmware upload + run controls -->
+          <div class="qc-toolbar">
+            <div class="qc-toolbar-left">
+              <div class="qc-fw-upload-inline" id="qc-firmware-upload-zone">
+                <input type="file" id="qc_firmware_file" accept=".csv" style="display:none" />
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span id="qc-firmware-status" class="muted" style="font-size:12px;">Upload Firmware.csv</span>
+              </div>
+            </div>
+            <div class="qc-toolbar-right">
+              <span class="muted" id="qc-run-status" style="font-size:12px;"></span>
+              <button class="btn primary" id="btn-run-qc" ${hasPermission("jobs_run") ? "" : "disabled"}>Run Quick QC</button>
+              <button class="btn danger" id="btn-stop-qc" style="display:none">Stop</button>
+            </div>
+          </div>
+
+          <!-- QC report -->
+          <div id="qc-report-container">
+            <div class="qc-empty-state">
+              <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.25;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              <p class="muted" style="margin-top:8px;">No QC report yet</p>
+              <p class="muted" style="font-size:11px;">Upload a Firmware.csv (optional), then click <strong>Run Quick QC</strong></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="qc-sub-panel" id="qc-sub-checklist">
+          <div class="qc-empty-state">
+            <p class="muted">QC Checklist — coming soon</p>
+          </div>
+        </div>
+
+      </div>
+
     </div>
   `;
 
-  // Wire tabs
-  qsa(".modal-tab", panel).forEach(tab => {
-    tab.addEventListener("click", () => {
+  // Wire tabs via event delegation (single listener instead of N)
+  const tabContainer = qs(".modal-tabs", panel);
+  if (tabContainer) {
+    tabContainer.addEventListener("click", (e) => {
+      const tab = e.target.closest(".modal-tab");
+      if (!tab) return;
       qsa(".modal-tab", panel).forEach(t => {
         t.classList.remove("active");
         t.setAttribute("aria-selected", "false");
@@ -745,7 +869,22 @@ function renderJobPanel(job) {
       const target = $(tab.dataset.tab);
       if (target) target.classList.add("active");
     });
-  });
+
+    // ── Arrow key navigation (WAI-ARIA tabs pattern) ──
+    tabContainer.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      const tabs = Array.from(qsa(".modal-tab", tabContainer));
+      if (tabs.length === 0) return;
+      const idx = tabs.indexOf(document.activeElement);
+      if (idx === -1) return;
+      e.preventDefault();
+      const next = e.key === "ArrowRight"
+        ? tabs[(idx + 1) % tabs.length]
+        : tabs[(idx - 1 + tabs.length) % tabs.length];
+      next.focus();
+      next.click();
+    });
+  }
 
   // Wire actions
   const uploadBtn = $("job_upload_btn");
@@ -825,8 +964,7 @@ function renderJobPanel(job) {
   loadOutputReports(jobId);
   updatePreflightChecklist(jobId);
   updateOverviewRunHistory(jobId);
-  updateTabChecks(jobId);
-  updateRunButtonState(jobId);
+  updateJobReadiness(jobId);
   updateJobTimeline(jobId);
 
   if (isRunning) {
@@ -853,6 +991,16 @@ function renderJobPanel(job) {
 
   // Wire drag-and-drop on upload zones
   wireDropZone("upload-zone", "job_upload_file", () => uploadJobFile(jobId));
+
+  // Wire QC tab
+  const runQcBtn = $("btn-run-qc");
+  if (runQcBtn) runQcBtn.addEventListener("click", () => runQuickQc(jobId));
+  const stopQcBtn = $("btn-stop-qc");
+  if (stopQcBtn) stopQcBtn.addEventListener("click", () => stopQuickQc(jobId));
+  wireQcSubTabs();
+  wireQcFirmwareUpload(jobId);
+  loadQcFirmwareStatus(job);
+  loadQcReport(jobId);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -949,6 +1097,12 @@ function ensureJobModalStyles() {
       from { transform: translateX(100%); }
       to { transform: translateX(0); }
     }
+    @keyframes slideOutRight {
+      from { transform: translateX(0); opacity: 1; }
+      to   { transform: translateX(100%); opacity: 0; }
+    }
+    .panel-closing { animation: slideOutRight 0.2s ease-in forwards !important; }
+    .backdrop-closing { animation: modalFadeIn 0.2s ease-in reverse forwards; }
     .panel-header   { display:flex; align-items:center; justify-content:space-between; gap:12px;
                       padding: 18px 20px; border-bottom:1px solid var(--tab-border); border-top: 3px solid #3b82f6;
                       background: linear-gradient(180deg, rgba(59,130,246,0.06), transparent); flex-shrink: 0; }
@@ -1010,10 +1164,10 @@ function ensureJobModalStyles() {
     .wizard-modal-root { position: fixed; inset: 0; z-index: 10000; pointer-events: none; }
     .wizard-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.72); backdrop-filter: blur(2px); pointer-events: auto; animation: modalFadeIn 0.2s ease-out; }
     .wizard-card { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-                   width: min(600px, calc(100vw - 48px)); max-height: min(80vh, 700px);
+                   width: min(640px, calc(100vw - 48px)); max-height: min(85vh, 740px);
                    overflow: auto; background: var(--bg-body);
                    border: 1px solid var(--card-border); border-top: 4px solid #3b82f6; border-radius: 16px;
-                   box-shadow: 0 20px 80px rgba(0,0,0,0.6); pointer-events: auto; padding: 18px; animation: modalScaleIn 0.2s ease-out; }
+                   box-shadow: 0 20px 80px rgba(0,0,0,0.6); pointer-events: auto; padding: 24px; animation: modalScaleIn 0.2s ease-out; }
     @keyframes modalFadeIn {
       from { opacity: 0; }
       to { opacity: 1; }

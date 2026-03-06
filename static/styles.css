@@ -1159,6 +1159,83 @@ body.theme-transitioning * {
     0 0 8px rgba(59,130,246,0.3);
 }
 
+/* ── Progress Connector Lines ── */
+.tab-step { position: relative; }
+
+.modal-tab:not(:last-child) .tab-step::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 24px;
+  height: 2px;
+  transform: translateY(-50%);
+  background: linear-gradient(90deg, rgba(59,130,246,0.25), transparent);
+  pointer-events: none;
+  transition: background 0.3s ease;
+}
+
+.modal-tab.active:not(:last-child) .tab-step::after {
+  background: linear-gradient(90deg, rgba(59,130,246,0.5), transparent);
+}
+
+/* ── Completed Step Styling ── */
+.modal-tab.completed .tab-step {
+  background: rgba(34,197,94,0.15);
+  color: transparent;
+  box-shadow: 0 0 6px rgba(34,197,94,0.25);
+}
+
+.modal-tab.completed .tab-step::before {
+  content: "\2713";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #22c55e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.modal-tab.active.completed .tab-step {
+  background: #22c55e;
+  color: transparent;
+  box-shadow:
+    0 1px 3px rgba(34,197,94,0.25),
+    0 0 8px rgba(34,197,94,0.3);
+}
+
+.modal-tab.active.completed .tab-step::before {
+  color: #fff;
+}
+
+.modal-tab.completed:not(:last-child) .tab-step::after {
+  background: linear-gradient(90deg, rgba(34,197,94,0.4), transparent);
+}
+
+.modal-tab.active.completed:not(:last-child) .tab-step::after {
+  background: linear-gradient(90deg, rgba(34,197,94,0.6), transparent);
+}
+
+/* ── Light theme overrides for completed steps ── */
+[data-theme="light"] .modal-tab.completed .tab-step {
+  background: rgba(34,197,94,0.12);
+  box-shadow: 0 0 6px rgba(34,197,94,0.18);
+}
+
+[data-theme="light"] .modal-tab.completed .tab-step::before {
+  color: #16a34a;
+}
+
+[data-theme="light"] .modal-tab.active.completed .tab-step {
+  background: #16a34a;
+}
+
+[data-theme="light"] .modal-tab.completed:not(:last-child) .tab-step::after {
+  background: linear-gradient(90deg, rgba(22,163,74,0.35), transparent);
+}
+
 .tab-panel {
   display: none;
 }
